@@ -182,8 +182,23 @@ namespace VoiceTyper
             ToggleListening();
         }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
+        protected override async void OnFormClosing(FormClosingEventArgs e)
         {
+            // If we're currently listening, stop it first
+            if (isListening && recognizer != null)
+            {
+                e.Cancel = true; // Temporarily cancel closing
+                
+                // Stop listening
+                await recognizer.StopContinuousRecognitionAsync();
+                isListening = false;
+                
+                // Now close the form
+                this.Close();
+                return;
+            }
+
+            // Regular cleanup
             UnregisterHotKey(this.Handle, HOTKEY_ID);
             if (recognizer != null)
             {
