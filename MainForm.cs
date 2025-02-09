@@ -6,7 +6,7 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.IO;
 
-namespace VoiceTyper
+namespace SPCHR
 {
     public partial class MainForm : Form
     {

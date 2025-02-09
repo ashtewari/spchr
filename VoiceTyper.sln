@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.12.35527.113 d17.12
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceTyper", "VoiceTyper.csproj", "{CCAA6F73-7604-4E8D-90C6-9D9ACFA0C1B3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SPCHR", "SPCHR.csproj", "{CCAA6F73-7604-4E8D-90C6-9D9ACFA0C1B3}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

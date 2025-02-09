@@ -1,6 +1,6 @@
-# VoiceTyper
+# SPCHR
 
-VoiceTyper is a Windows application that enables real-time voice-to-text input using Azure Speech Services. It provides a lightweight, always-on-top interface that allows you to type with your voice in any text input field.
+SPCHR is a Windows application that enables real-time voice-to-text input using Azure Speech Services. It provides a lightweight, always-on-top interface that allows you to type with your voice in any text input field.
 
 ## Features
 
@@ -33,7 +33,7 @@ VoiceTyper is a Windows application that enables real-time voice-to-text input u
 
 ## Usage
 
-1. Launch VoiceTyper
+1. Launch SPCHR
 2. Click the "Start Listening" button or press Ctrl+Alt+L to begin voice input
 3. Speak clearly into your microphone
 4. Your speech will be converted to text and automatically typed at the cursor position

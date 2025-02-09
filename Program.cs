@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Forms;
 
-namespace VoiceTyper
+namespace SPCHR
 {
     internal static class Program
     {

@@ -1,4 +1,4 @@
-namespace VoiceTyper
+namespace SPCHR
 {
     partial class MainForm
     {
@@ -19,7 +19,7 @@ namespace VoiceTyper
             statusLabel = new Label();
             
             // Form settings
-            this.Text = "Voice Typer";
+            this.Text = "SPCHR";
             this.Size = new Size(300, 150);
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.MaximizeBox = false;
