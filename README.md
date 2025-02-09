@@ -8,7 +8,6 @@ A Windows desktop application that provides real-time speech-to-text transcripti
 - Automatic fallback to local Whisper model if Azure credentials aren't available
 - Global hotkey support (Ctrl+Alt+L) to start/stop recording
 - Automatic text pasting to active window
-- Minimal UI with system tray presence
 - Support for both cloud (Azure) and local (Whisper) transcription
 
 ## Prerequisites
@@ -43,10 +42,7 @@ A Windows desktop application that provides real-time speech-to-text transcripti
 
 - Uses NAudio for audio capture
 - Implements OpenAI's Whisper model locally via Whisper.net
-- Real-time streaming transcription with ~2 second chunks
-- Proper WAV format handling for Whisper input
-- Thread-safe audio buffer management
-- Efficient resource cleanup
+- Real-time streaming transcription
 
 ## Dependencies
 
@@ -54,7 +50,6 @@ A Windows desktop application that provides real-time speech-to-text transcripti
 - Whisper.net
 - Whisper.net.Runtime
 - NAudio
-- Microsoft.Extensions.Configuration
 
 ## Development
 

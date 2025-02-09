@@ -294,7 +294,7 @@ namespace SPCHR
                 
                 if (!File.Exists(modelPath))
                 {
-                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.BaseEn);
                     using var fileStream = File.Create(modelPath);
                     await modelStream.CopyToAsync(fileStream);
                 }
