@@ -45,6 +45,22 @@ namespace VoiceTyper
                 .AddJsonFile("appsettings.Development.json", optional: true)
                 .Build();
 
+            // Update these form properties
+            this.FormBorderStyle = FormBorderStyle.FixedToolWindow; // Makes it a small tool window
+            this.TopMost = true; // Keeps it on top of other windows
+            this.ShowInTaskbar = false; // Optionally hide from taskbar
+            this.MinimizeBox = false; // Disable minimize button
+            this.MaximizeBox = false; // Disable maximize button
+            this.ControlBox = true; // Show the control box (for close button)
+            this.StartPosition = FormStartPosition.Manual; // Allows us to position it manually
+
+            // Position the window in the top-right corner of the screen
+            Rectangle workingArea = Screen.GetWorkingArea(this);
+            this.Location = new Point(
+                workingArea.Right - this.Width - 20,
+                workingArea.Top + 20
+            );
+
             InitializeComponent();
             InitializeSpeechRecognizer();
             RegisterGlobalHotKey();
@@ -117,13 +133,25 @@ namespace VoiceTyper
 
         protected override void WndProc(ref Message m)
         {
+            const int WM_SYSCOMMAND = 0x0112;
+            const int SC_MINIMIZE = 0xF020;
+
+            if (m.Msg == WM_SYSCOMMAND)
+            {
+                int command = m.WParam.ToInt32() & 0xFFF0;
+                if (command == SC_MINIMIZE)
+                {
+                    return; // Ignore minimize command
+                }
+            }
+
+            // Don't forget to keep the existing hotkey handling
             const int WM_HOTKEY = 0x0312;
-            
             if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
             {
                 ToggleListening();
             }
-            
+
             base.WndProc(ref m);
         }
 
