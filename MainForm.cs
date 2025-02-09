@@ -398,14 +398,12 @@ namespace SPCHR
         // and if so, it passes the new data (wrapped in a valid WAV stream) to the Whisper processor.
         private async Task ProcessAudioBufferAsync(CancellationToken ct)
         {
-            // Define a minimum chunk size (e.g. about 2 seconds of audio).
             const int MIN_CHUNK_SIZE = 32000; // ~2 seconds of 16kHz, 16-bit, mono audio.
 
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    // Wait about one second between checks.
                     await Task.Delay(1000, ct);
                 }
                 catch (TaskCanceledException)
@@ -419,11 +417,9 @@ namespace SPCHR
                     int available = _rawAudioBuffer.Count - _processedBytes;
                     if (available >= MIN_CHUNK_SIZE)
                     {
-                        // Take all available new bytes.
                         chunk = _rawAudioBuffer.Skip(_processedBytes).Take(available).ToArray();
                         _processedBytes += available;
 
-                        // Optionally: to avoid indefinite growth of the list, remove processed bytes.
                         if (_processedBytes > 64000)
                         {
                             _rawAudioBuffer.RemoveRange(0, _processedBytes);
@@ -437,15 +433,18 @@ namespace SPCHR
                     try
                     {
                         var transcribedText = new StringBuilder();
-                        // Wrap the raw PCM chunk in a valid WAV header.
                         using var wavStream = CreateWavStream(chunk);
                         await foreach (var segment in _processor.ProcessAsync(wavStream))
                         {
-                            transcribedText.Append(segment.Text);
+                            // Skip [BLANK_AUDIO] and empty segments
+                            if (!string.IsNullOrWhiteSpace(segment.Text) && 
+                                !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
+                            {
+                                transcribedText.Append(segment.Text);
+                            }
                         }
                         if (transcribedText.Length > 0)
                         {
-                            // Update the UI on the UI thread.
                             this.Invoke(() => PasteText(transcribedText.ToString()));
                         }
                     }
@@ -488,7 +487,12 @@ namespace SPCHR
                     using var wavStream = CreateWavStream(remaining);
                     await foreach (var segment in _processor.ProcessAsync(wavStream))
                     {
-                        transcribedText.Append(segment.Text);
+                        // Skip [BLANK_AUDIO] and empty segments
+                        if (!string.IsNullOrWhiteSpace(segment.Text) && 
+                            !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
+                        {
+                            transcribedText.Append(segment.Text);
+                        }
                     }
                     if (transcribedText.Length > 0)
                     {
