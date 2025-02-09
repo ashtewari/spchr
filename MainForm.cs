@@ -1,6 +1,7 @@
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Configuration;
 
 namespace VoiceTyper
 {
@@ -8,6 +9,7 @@ namespace VoiceTyper
     {
         private bool isListening = false;
         private SpeechRecognizer? recognizer;
+        private readonly IConfiguration configuration;
         
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -21,6 +23,11 @@ namespace VoiceTyper
 
         public MainForm()
         {
+            configuration = new ConfigurationBuilder()
+                .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
+                .AddJsonFile("appsettings.json")
+                .Build();
+
             InitializeComponent();
             InitializeSpeechRecognizer();
         }
@@ -29,7 +36,15 @@ namespace VoiceTyper
         {
             try
             {
-                var config = SpeechConfig.FromSubscription("E8p4cbMr3kARNSjhPo6CJHHm98i6qSmk81S8iupsRmTRemE2RSidJQQJ99BBACYeBjFXJ3w3AAAYACOGWGpz", "eastus");
+                var subscriptionKey = configuration["AzureSpeech:SubscriptionKey"];
+                var region = configuration["AzureSpeech:Region"];
+                
+                if (string.IsNullOrEmpty(subscriptionKey) || string.IsNullOrEmpty(region))
+                {
+                    throw new InvalidOperationException("Azure Speech configuration is missing in appsettings.json");
+                }
+
+                var config = SpeechConfig.FromSubscription(subscriptionKey, region);
                 var audioConfig = AudioConfig.FromDefaultMicrophoneInput();
                 recognizer = new SpeechRecognizer(config, audioConfig);
 

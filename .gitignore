@@ -54,4 +54,5 @@ _ReSharper*/
 
 # Others
 *.log
-.env 
+.env
+appsettings.Development.json 
