@@ -2,6 +2,9 @@ using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Configuration;
+using System.Windows.Forms;
+using System.Drawing;
+using System.IO;
 
 namespace VoiceTyper
 {
@@ -10,6 +13,7 @@ namespace VoiceTyper
         private bool isListening = false;
         private SpeechRecognizer? recognizer;
         private readonly IConfiguration configuration;
+        private PictureBox microphoneIcon;
         
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -44,6 +48,7 @@ namespace VoiceTyper
             InitializeComponent();
             InitializeSpeechRecognizer();
             RegisterGlobalHotKey();
+            InitializeMicrophoneIcon();
         }
 
         private async void InitializeSpeechRecognizer()
@@ -131,12 +136,14 @@ namespace VoiceTyper
                 await recognizer.StartContinuousRecognitionAsync();
                 toggleButton.Text = "Stop Listening";
                 statusLabel.Text = "Listening...";
+                SetMicrophoneActive(true);
             }
             else
             {
                 await recognizer.StopContinuousRecognitionAsync();
                 toggleButton.Text = "Start Listening";
                 statusLabel.Text = "Not listening";
+                SetMicrophoneActive(false);
             }
             
             isListening = !isListening;
@@ -155,6 +162,34 @@ namespace VoiceTyper
                 recognizer.Dispose();
             }
             base.OnFormClosing(e);
+        }
+
+        private void InitializeMicrophoneIcon()
+        {
+            microphoneIcon = new PictureBox
+            {
+                Size = new Size(32, 32),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Location = new Point(
+                    toggleButton.Location.X - 42,
+                    toggleButton.Location.Y + (toggleButton.Height - 32) / 2
+                ),
+                Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "microphone-inactive.png"))
+            };
+            
+            this.Controls.Add(microphoneIcon);
+        }
+
+        public void SetMicrophoneActive(bool isActive)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => SetMicrophoneActive(isActive)));
+                return;
+            }
+
+            string iconName = isActive ? "microphone-active.png" : "microphone-inactive.png";
+            microphoneIcon.Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", iconName));
         }
     }
 } 
