@@ -5,6 +5,14 @@ using Microsoft.Extensions.Configuration;
 using System.Windows.Forms;
 using System.Drawing;
 using System.IO;
+using Whisper.net;
+using Whisper.net.Ggml;
+using NAudio.Wave;
+using System.Text;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SPCHR
 {
@@ -14,6 +22,20 @@ namespace SPCHR
         private SpeechRecognizer? recognizer;
         private readonly IConfiguration configuration;
         private PictureBox microphoneIcon;
+        private WhisperProcessor? _processor;
+        private WaveInEvent? _waveIn;
+        // Removed: private MemoryStream? _audioStream;
+        // Removed: private WaveFileWriter? _writer;
+
+        // For on‐the‐fly Whisper transcription we now accumulate raw PCM bytes:
+        // Instead of writing a WAV file header ourselves and then stripping it out,
+        // we accumulate raw PCM bytes and then later wrap them with a proper WAV header.
+        private readonly List<byte> _rawAudioBuffer = new List<byte>();
+        private int _processedBytes = 0;
+        private readonly object _bufferLock = new object();
+        private CancellationTokenSource? _transcriptionCts;
+
+        private bool useWhisper = false;
         
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -76,7 +98,9 @@ namespace SPCHR
                 
                 if (string.IsNullOrEmpty(subscriptionKey) || string.IsNullOrEmpty(region))
                 {
-                    throw new InvalidOperationException("Azure Speech configuration is missing in appsettings.json");
+                    useWhisper = true;
+                    await InitializeWhisper();
+                    return;
                 }
 
                 var config = SpeechConfig.FromSubscription(subscriptionKey, region);
@@ -87,7 +111,9 @@ namespace SPCHR
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error initializing speech recognizer: {ex.Message}");
+                useWhisper = true;
+                await InitializeWhisper();
+                MessageBox.Show($"Falling back to local Whisper model: {ex.Message}");
             }
         }
 
@@ -145,7 +171,7 @@ namespace SPCHR
                 }
             }
 
-            // Don't forget to keep the existing hotkey handling
+            // Hotkey handling remains unchanged.
             const int WM_HOTKEY = 0x0312;
             if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
             {
@@ -157,21 +183,39 @@ namespace SPCHR
 
         private async void ToggleListening()
         {
-            if (recognizer == null) return;
-            
-            if (!isListening)
+            if (useWhisper)
             {
-                await recognizer.StartContinuousRecognitionAsync();
-                toggleButton.Text = "Stop Listening";
-                statusLabel.Text = "Listening...";
-                SetMicrophoneActive(true);
+                if (!isListening)
+                {
+                    StartWhisperRecording();
+                    toggleButton.Text = "Stop Listening";
+                    statusLabel.Text = "Listening (Whisper)...";
+                    SetMicrophoneActive(true);
+                }
+                else
+                {
+                    await StopWhisperRecordingAndTranscribe();
+                    toggleButton.Text = "Start Listening";
+                    statusLabel.Text = "Not listening";
+                    SetMicrophoneActive(false);
+                }
             }
-            else
+            else if (recognizer != null)
             {
-                await recognizer.StopContinuousRecognitionAsync();
-                toggleButton.Text = "Start Listening";
-                statusLabel.Text = "Not listening";
-                SetMicrophoneActive(false);
+                if (!isListening)
+                {
+                    await recognizer.StartContinuousRecognitionAsync();
+                    toggleButton.Text = "Stop Listening";
+                    statusLabel.Text = "Listening (Azure)...";
+                    SetMicrophoneActive(true);
+                }
+                else
+                {
+                    await recognizer.StopContinuousRecognitionAsync();
+                    toggleButton.Text = "Start Listening";
+                    statusLabel.Text = "Not listening";
+                    SetMicrophoneActive(false);
+                }
             }
             
             isListening = !isListening;
@@ -185,12 +229,18 @@ namespace SPCHR
         protected override async void OnFormClosing(FormClosingEventArgs e)
         {
             // If we're currently listening, stop it first
-            if (isListening && recognizer != null)
+            if (isListening)
             {
                 e.Cancel = true; // Temporarily cancel closing
                 
-                // Stop listening
-                await recognizer.StopContinuousRecognitionAsync();
+                if (useWhisper)
+                {
+                    await StopWhisperRecordingAndTranscribe();
+                }
+                else if (recognizer != null)
+                {
+                    await recognizer.StopContinuousRecognitionAsync();
+                }
                 isListening = false;
                 
                 // Now close the form
@@ -200,10 +250,11 @@ namespace SPCHR
 
             // Regular cleanup
             UnregisterHotKey(this.Handle, HOTKEY_ID);
-            if (recognizer != null)
-            {
-                recognizer.Dispose();
-            }
+            recognizer?.Dispose();
+            _processor?.Dispose();
+            _waveIn?.Dispose();
+            // Removed disposal of _audioStream and _writer since they are no longer used.
+            
             base.OnFormClosing(e);
         }
 
@@ -234,5 +285,251 @@ namespace SPCHR
             string iconName = isActive ? "microphone-active.png" : "microphone-inactive.png";
             microphoneIcon.Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", iconName));
         }
+
+        private async Task InitializeWhisper()
+        {
+            try
+            {
+                var modelPath = Path.Combine(Application.StartupPath, "whisper-model.bin");
+                
+                if (!File.Exists(modelPath))
+                {
+                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+                    using var fileStream = File.Create(modelPath);
+                    await modelStream.CopyToAsync(fileStream);
+                }
+
+                // Create the factory and build the processor correctly
+                var factory = WhisperFactory.FromPath(modelPath);
+                _processor = factory.CreateBuilder()
+                                  .WithLanguage("en")  // Set English as the default language
+                                  .Build();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error initializing Whisper: {ex.Message}", "Whisper Initialization Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        #region Whisper Recording and On-The-Fly Transcription
+
+        /// <summary>
+        /// Creates a valid WAV stream (16kHz, 16-bit, mono) from raw PCM data.
+        /// </summary>
+        private MemoryStream CreateWavStream(byte[] pcmData)
+        {
+            MemoryStream wavStream = new MemoryStream();
+            using (BinaryWriter writer = new BinaryWriter(wavStream, Encoding.ASCII, leaveOpen: true))
+            {
+                int pcmDataLength = pcmData.Length;
+                int headerSize = 44;
+                int fileSize = headerSize + pcmDataLength - 8;
+                short audioFormat = 1; // PCM
+                short numChannels = 1;
+                int sampleRate = 16000;
+                short bitsPerSample = 16;
+                int byteRate = sampleRate * numChannels * bitsPerSample / 8;
+                short blockAlign = (short)(numChannels * bitsPerSample / 8);
+
+                // Write the RIFF header.
+                writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+                writer.Write(fileSize);
+                writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+
+                // Write the fmt chunk.
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(16); // Subchunk1Size for PCM.
+                writer.Write(audioFormat);
+                writer.Write(numChannels);
+                writer.Write(sampleRate);
+                writer.Write(byteRate);
+                writer.Write(blockAlign);
+                writer.Write(bitsPerSample);
+
+                // Write the data chunk header.
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(pcmDataLength);
+
+                writer.Flush();
+            }
+            // Append the raw PCM data.
+            wavStream.Write(pcmData, 0, pcmData.Length);
+            wavStream.Position = 0;
+            return wavStream;
+        }
+
+        private void StartWhisperRecording()
+        {
+            if (_waveIn != null) return;
+
+            // Clear any previous data.
+            lock (_bufferLock)
+            {
+                _rawAudioBuffer.Clear();
+                _processedBytes = 0;
+            }
+
+            // Create a CancellationTokenSource for our background transcription task.
+            _transcriptionCts = new CancellationTokenSource();
+
+            _waveIn = new WaveInEvent
+            {
+                WaveFormat = new WaveFormat(16000, 16, 1) // 16kHz, 16-bit, mono
+            };
+
+            _waveIn.DataAvailable += WaveIn_DataAvailable;
+            _waveIn.StartRecording();
+
+            // Start background processing of the raw PCM buffer.
+            Task.Run(() => ProcessAudioBufferAsync(_transcriptionCts.Token));
+        }
+
+        private void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
+        {
+            lock (_bufferLock)
+            {
+                // Append exactly the recorded bytes.
+                _rawAudioBuffer.AddRange(e.Buffer.Take(e.BytesRecorded));
+            }
+        }
+
+        // This background task periodically checks if enough new audio data has accumulated,
+        // and if so, it passes the new data (wrapped in a valid WAV stream) to the Whisper processor.
+        private async Task ProcessAudioBufferAsync(CancellationToken ct)
+        {
+            const int MIN_CHUNK_SIZE = 32000; // ~2 seconds of 16kHz, 16-bit, mono audio.
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(1000, ct);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+
+                byte[]? chunk = null;
+                lock (_bufferLock)
+                {
+                    int available = _rawAudioBuffer.Count - _processedBytes;
+                    if (available >= MIN_CHUNK_SIZE)
+                    {
+                        chunk = _rawAudioBuffer.Skip(_processedBytes).Take(available).ToArray();
+                        _processedBytes += available;
+
+                        if (_processedBytes > 64000)
+                        {
+                            _rawAudioBuffer.RemoveRange(0, _processedBytes);
+                            _processedBytes = 0;
+                        }
+                    }
+                }
+
+                if (chunk != null && chunk.Length > 0)
+                {
+                    try
+                    {
+                        var transcribedText = new StringBuilder();
+                        using var wavStream = CreateWavStream(chunk);
+                        await foreach (var segment in _processor.ProcessAsync(wavStream))
+                        {
+                            // Skip [BLANK_AUDIO] and empty segments
+                            if (!string.IsNullOrWhiteSpace(segment.Text) && 
+                                !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
+                            {
+                                transcribedText.Append(segment.Text);
+                            }
+                        }
+                        if (transcribedText.Length > 0)
+                        {
+                            this.Invoke(() => PasteText(transcribedText.ToString()));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error during on-the-fly transcription: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        // When stopping recording, we cancel the background task and process any remaining audio.
+        private async Task StopWhisperRecordingAndTranscribe()
+        {
+            if (_waveIn == null) return;
+
+            _waveIn.StopRecording();
+            _waveIn.Dispose();
+            _waveIn = null;
+
+            if (_transcriptionCts != null)
+            {
+                _transcriptionCts.Cancel();
+                _transcriptionCts.Dispose();
+                _transcriptionCts = null;
+            }
+
+            // Process any remaining unprocessed audio.
+            byte[] remaining;
+            lock (_bufferLock)
+            {
+                int available = _rawAudioBuffer.Count - _processedBytes;
+                remaining = available > 0 ? _rawAudioBuffer.Skip(_processedBytes).Take(available).ToArray() : Array.Empty<byte>();
+            }
+            if (remaining.Length > 0)
+            {
+                try
+                {
+                    var transcribedText = new StringBuilder();
+                    using var wavStream = CreateWavStream(remaining);
+                    await foreach (var segment in _processor.ProcessAsync(wavStream))
+                    {
+                        // Skip [BLANK_AUDIO] and empty segments
+                        if (!string.IsNullOrWhiteSpace(segment.Text) && 
+                            !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
+                        {
+                            transcribedText.Append(segment.Text);
+                        }
+                    }
+                    if (transcribedText.Length > 0)
+                    {
+                        this.Invoke(() => PasteText(transcribedText.ToString()));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error transcribing final audio: {ex.Message}");
+                }
+            }
+
+            // Clear the buffer.
+            lock (_bufferLock)
+            {
+                _rawAudioBuffer.Clear();
+                _processedBytes = 0;
+            }
+        }
+
+        #endregion
+
+        // These buttons (if you choose to add them) can still start/stop recording manually.
+        private async void btnStartRecording_Click(object sender, EventArgs e)
+        {
+            StartWhisperRecording();
+        }
+
+        private async void btnStopRecording_Click(object sender, EventArgs e)
+        {
+            await StopWhisperRecordingAndTranscribe();
+        }
+
+        // Make sure to initialize Whisper when the form loads.
+        private async void MainForm_Load(object sender, EventArgs e)
+        {
+            await InitializeWhisper();
+        }
     }
-} 
+}

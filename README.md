@@ -1,58 +1,68 @@
-# SPCHR
+# SPCHR (Speech Recognition Tool)
 
-SPCHR is a Windows application that enables real-time voice-to-text input using Azure Speech Services. It provides a lightweight, always-on-top interface that allows you to type with your voice in any text input field.
+A Windows desktop application that provides real-time speech-to-text transcription using either Azure Speech Services or OpenAI's Whisper model locally.
 
 ## Features
 
-- Real-time voice-to-text conversion
-- Global hotkey support (Ctrl+Alt+L to toggle listening)
-- Visual feedback with microphone status icon
-- Always-on-top window for easy access
-- Works with any text input field
+- Real-time speech-to-text transcription
+- Automatic fallback to local Whisper model if Azure credentials aren't available
+- Global hotkey support (Ctrl+Alt+L) to start/stop recording
+- Automatic text pasting to active window
+- Minimal UI with system tray presence
+- Support for both cloud (Azure) and local (Whisper) transcription
 
 ## Prerequisites
 
 - Windows OS
 - .NET 6.0 or later
-- Azure Speech Services subscription
-- Visual Studio 2022 (for development)
+- Visual Studio 2019 or later (for development)
+- Azure Speech Services subscription (optional)
 
-## Setup
+## Installation
 
 1. Clone the repository
-2. Create an `appsettings.json` file in the project root with your Azure Speech Services credentials:
+2. Build the solution using Visual Studio
+3. Configure settings in `appsettings.json`:
    ```json
    {
      "AzureSpeech": {
-       "SubscriptionKey": "your-subscription-key",
-       "Region": "your-region"
+       "SubscriptionKey": "your-key-here",
+       "Region": "your-region-here"
      }
    }
    ```
-3. Build and run the application
 
 ## Usage
 
-1. Launch SPCHR
-2. Click the "Start Listening" button or press Ctrl+Alt+L to begin voice input
+1. Launch the application
+2. Use the global hotkey (Ctrl+Alt+L) to start/stop recording
 3. Speak clearly into your microphone
-4. Your speech will be converted to text and automatically typed at the cursor position
-5. Press Ctrl+Alt+L again or click "Stop Listening" to stop voice input
+4. Transcribed text will automatically be pasted into the active window
+
+## Technical Details
+
+- Uses NAudio for audio capture
+- Implements OpenAI's Whisper model locally via Whisper.net
+- Real-time streaming transcription with ~2 second chunks
+- Proper WAV format handling for Whisper input
+- Thread-safe audio buffer management
+- Efficient resource cleanup
+
+## Dependencies
+
+- Microsoft.CognitiveServices.Speech
+- Whisper.net
+- Whisper.net.Runtime
+- NAudio
+- Microsoft.Extensions.Configuration
 
 ## Development
 
-The project is built using:
-- C# / .NET 6.0
-- Windows Forms
-- Azure Speech Services SDK
-- NAudio for audio visualization
-
-## Configuration
-
-You can modify the following settings in the code:
-- Hotkey combination (MainForm.cs)
-- Window position and appearance
-- Audio visualization parameters
+The application uses a modular architecture with:
+- Real-time audio capture and buffering
+- Background processing for continuous transcription
+- Proper resource management and cleanup
+- Error handling and fallback mechanisms
 
 ## License
 
@@ -60,8 +70,4 @@ You can modify the following settings in the code:
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request 
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change. 
