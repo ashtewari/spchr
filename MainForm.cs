@@ -197,10 +197,7 @@ namespace SPCHR
             {
                 if (!isListening)
                 {
-                    if (_transcriptor == null)
-                    {
-                        await InitializeRealtimeTranscriptor();
-                    }
+                    await InitializeRealtimeTranscriptor();
                     _micAudioSource.StartRecording();
                     toggleButton.Text = "Stop Listening";
                     statusLabel.Text = "Listening (Local)...";
@@ -214,6 +211,8 @@ namespace SPCHR
                         _transcriptionCancellation?.Cancel();
                         _transcriptionCancellation?.Dispose();
                         _transcriptionCancellation = null;
+                        _micAudioSource.Dispose();
+                        _micAudioSource = null;
                     }
                     toggleButton.Text = "Start Listening";
                     statusLabel.Text = "Not listening";
@@ -261,6 +260,8 @@ namespace SPCHR
                         _transcriptionCancellation?.Cancel();
                         _transcriptionCancellation?.Dispose();
                         _transcriptionCancellation = null;
+                        _micAudioSource.Dispose();
+                        _micAudioSource = null;
                     }
                 }
                 else if (recognizer != null)
@@ -278,6 +279,7 @@ namespace SPCHR
             UnregisterHotKey(this.Handle, HOTKEY_ID);
             recognizer?.Dispose();
             _transcriptor = null;
+            _micAudioSource?.Dispose();
             
             base.OnFormClosing(e);
         }
@@ -328,7 +330,7 @@ namespace SPCHR
                 var options = new RealtimeSpeechTranscriptorOptions()
                 {
                     AutodetectLanguageOnce = false,             // Detect language for each segment
-                    IncludeSpeechRecogizingEvents = true,         // Include "recognizing" events in the transcript stream
+                    IncludeSpeechRecogizingEvents = false,         // Include "recognizing" events in the transcript stream
                     RetrieveTokenDetails = true,                  // Retrieve token details if needed
                     LanguageAutoDetect = false,                   // Do not auto-detect language (use supplied language)
                     Language = new CultureInfo("en-US")           // Use U.S. English for transcription
@@ -353,7 +355,7 @@ namespace SPCHR
                             text = recognized.Segment.Text;
                         }
 
-                        if (!string.IsNullOrWhiteSpace(text))
+                        if (!string.IsNullOrWhiteSpace(text) && !text.Contains("[BLANK_AUDIO]") && !text.Contains("[SILENCE]"))
                         {
                             // Ensure UI thread invocation.
                             this.Invoke(new Action(() => PasteText(text)));
@@ -477,6 +479,8 @@ namespace SPCHR
                 _transcriptionCancellation?.Cancel();
                 _transcriptionCancellation?.Dispose();
                 _transcriptionCancellation = null;
+                _micAudioSource.Dispose();
+                _micAudioSource = null;
             }
         }
 
