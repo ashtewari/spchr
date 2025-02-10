@@ -344,7 +344,7 @@ namespace SPCHR
                 var options = new RealtimeSpeechTranscriptorOptions()
                 {
                     AutodetectLanguageOnce = false,             // Detect language for each segment
-                    IncludeSpeechRecogizingEvents = false,         // Include "recognizing" events in the transcript stream
+                    IncludeSpeechRecogizingEvents = true,         // Include "recognizing" events in the transcript stream
                     RetrieveTokenDetails = true,                  // Retrieve token details if needed
                     LanguageAutoDetect = false,                   // Do not auto-detect language (use supplied language)
                     Language = new CultureInfo("en-US")           // Use U.S. English for transcription
@@ -362,7 +362,7 @@ namespace SPCHR
                         string text = null;
                         if (segment is RealtimeSegmentRecognizing recognizing)
                         {
-                            text = recognizing.Segment.Text;
+                            //text = recognizing.Segment.Text;
                         }
                         else if (segment is RealtimeSegmentRecognized recognized)
                         {
