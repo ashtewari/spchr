@@ -1,4 +1,4 @@
-# SPCHR (Speech Recognition Tool)
+# SPCHR (Speech Transcription Tool)
 
 A Windows desktop application that provides real-time speech-to-text transcription using either Azure Speech Services or OpenAI's Whisper model locally.
 
@@ -21,7 +21,7 @@ A Windows desktop application that provides real-time speech-to-text transcripti
 
 1. Clone the repository
 2. Build the solution using Visual Studio
-3. Configure settings in `appsettings.json`:
+3. Configure settings in `appsettings.json` if you want to use Azure Speech Services:
    ```json
    {
      "AzureSpeech": {
@@ -40,16 +40,18 @@ A Windows desktop application that provides real-time speech-to-text transcripti
 
 ## Technical Details
 
-- Uses NAudio for audio capture
+- Uses EchoSharp library for real-time streaming transcription
+- Uses Whisper.net for transcription
 - Implements OpenAI's Whisper model locally via Whisper.net
-- Real-time streaming transcription
+- Uses NAudio for audio capture
 
 ## Dependencies
 
-- Microsoft.CognitiveServices.Speech
+- EchoSharp
 - Whisper.net
 - Whisper.net.Runtime
 - NAudio
+- Microsoft.CognitiveServices.Speech
 
 ## Development
 
