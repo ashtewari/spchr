@@ -2,16 +2,8 @@ using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Configuration;
-using System.Windows.Forms;
-using System.Drawing;
-using System.IO;
 using NAudio.Wave;
-using System.Text;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using EchoSharp;
+using Whisper.net.Ggml;
 
 using System.Globalization;
 using EchoSharp.Abstractions.SpeechTranscription;
@@ -34,16 +26,8 @@ namespace SPCHR
         private WaveInEvent? _waveIn;
         private MicrophoneInputSource _micAudioSource;
         private CancellationTokenSource? _transcriptionCancellation;
-        // Removed: private MemoryStream? _audioStream;
-        // Removed: private WaveFileWriter? _writer;
 
-        // For on‐the‐fly Whisper transcription we now accumulate raw PCM bytes:
-        // Instead of writing a WAV file header ourselves and then stripping it out,
-        // we accumulate raw PCM bytes and then later wrap them with a proper WAV header.
-        // private readonly List<byte> _rawAudioBuffer = new List<byte>();
-        // private int _processedBytes = 0;
-        // private readonly object _bufferLock = new object();
-        // private CancellationTokenSource? _transcriptionCts;
+        private string _modelPath = Path.Combine(Application.StartupPath, "models", "ggml-base.bin");
 
         private bool useWhisper = false;
         
@@ -69,6 +53,9 @@ namespace SPCHR
         private const byte VK_CONTROL = 0x11;
         private const byte VK_V = 0x56;
 
+        private bool _modelDownloaded = false;
+        private Label _downloadStatusLabel;
+
         public MainForm()
         {
             configuration = new ConfigurationBuilder()
@@ -77,26 +64,26 @@ namespace SPCHR
                 .AddJsonFile("appsettings.Development.json", optional: true)
                 .Build();
 
-            // Update these form properties
-            this.FormBorderStyle = FormBorderStyle.FixedToolWindow; // Makes it a small tool window
-            this.TopMost = true; // Keeps it on top of other windows
-            this.ShowInTaskbar = false; // Optionally hide from taskbar
-            this.MinimizeBox = false; // Disable minimize button
-            this.MaximizeBox = false; // Disable maximize button
-            this.ControlBox = true; // Show the control box (for close button)
-            this.StartPosition = FormStartPosition.Manual; // Allows us to position it manually
+            InitializeComponent(); // This needs to happen before we access any controls
+            
+            // Update form properties
+            this.FormBorderStyle = FormBorderStyle.FixedToolWindow;
+            this.TopMost = true;
+            this.ShowInTaskbar = false;
+            this.MinimizeBox = false;
+            this.MaximizeBox = false;
+            this.ControlBox = true;
+            this.StartPosition = FormStartPosition.Manual;
 
-            // Position the window in the top-right corner of the screen
             Rectangle workingArea = Screen.GetWorkingArea(this);
             this.Location = new Point(
                 workingArea.Right - this.Width - 20,
                 workingArea.Top + 20
             );
 
-            InitializeComponent();
-            InitializeSpeechRecognizer();
-            RegisterGlobalHotKey();
             InitializeMicrophoneIcon();
+            RegisterGlobalHotKey();
+            InitializeSpeechRecognizer();
         }
 
         private async void InitializeSpeechRecognizer()
@@ -109,6 +96,8 @@ namespace SPCHR
                 if (string.IsNullOrEmpty(subscriptionKey) || string.IsNullOrEmpty(region))
                 {
                     useWhisper = true;
+                    toggleButton.Enabled = false; // Disable until model is downloaded
+                    await DownloadWhisperModel();
                     await InitializeRealtimeTranscriptor();
                     return;
                 }
@@ -122,6 +111,8 @@ namespace SPCHR
             catch (Exception ex)
             {
                 useWhisper = true;
+                toggleButton.Enabled = false; // Disable until model is downloaded
+                await DownloadWhisperModel();
                 await InitializeRealtimeTranscriptor();
                 MessageBox.Show($"Falling back to local Whisper model: {ex.Message}");
             }
@@ -193,6 +184,13 @@ namespace SPCHR
 
         private async void ToggleListening()
         {
+            if (useWhisper && !_modelDownloaded)
+            {
+                MessageBox.Show("Please wait for the model to finish downloading.", 
+                    "Model Not Ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             if (useWhisper)
             {
                 if (!isListening)
@@ -298,6 +296,22 @@ namespace SPCHR
             };
             
             this.Controls.Add(microphoneIcon);
+
+            _downloadStatusLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(
+                    toggleButton.Location.X,  // Align with toggle button
+                    toggleButton.Location.Y - 25  // Place above the toggle button
+                ),
+                Text = "Downloading model...",
+                Visible = false,
+                Padding = new Padding(3), 
+            };
+            
+            // Ensure the label is shown on top of other controls
+            _downloadStatusLabel.BringToFront();
+            this.Controls.Add(_downloadStatusLabel);
         }
 
         public void SetMicrophoneActive(bool isActive)
@@ -318,13 +332,13 @@ namespace SPCHR
             {
                 // Set up the VAD detector and speech transcription factories.
                 var vadDetectorFactory = GetVadDetector("webrtc"); // Choose VAD detector method.
-                var speechTranscriptorFactory = GetSpeechTranscriptor("whisper.net"); // Choose transcription engine.
+                var speechTranscriptorFactory = await GetSpeechTranscriptor("whisper.net"); // Choose transcription engine.
 
                 // Create a microphone input source (deviceNumber: 0 uses the default device).
                 _micAudioSource = new MicrophoneInputSource(deviceNumber: 0);
 
                 // Get the realtime transcriptor factory from EchoSharp using the factories above.
-                var realTimeFactory = GetRealTimeTranscriptorFactory("echo sharp", speechTranscriptorFactory, vadDetectorFactory);
+                var realTimeFactory = await GetRealTimeTranscriptorFactory("echo sharp", speechTranscriptorFactory, vadDetectorFactory);
 
                 // Configure options for realtime transcription.
                 var options = new RealtimeSpeechTranscriptorOptions()
@@ -378,7 +392,7 @@ namespace SPCHR
             });
         }
 
-        IRealtimeSpeechTranscriptorFactory GetRealTimeTranscriptorFactory(string type, ISpeechTranscriptorFactory speechTranscriptorFactory, IVadDetectorFactory vadDetectorFactory)
+        private async Task<IRealtimeSpeechTranscriptorFactory> GetRealTimeTranscriptorFactory(string type, ISpeechTranscriptorFactory speechTranscriptorFactory, IVadDetectorFactory vadDetectorFactory)
         {
             return type switch
             {
@@ -388,26 +402,73 @@ namespace SPCHR
             };
         }
 
-        ISpeechTranscriptorFactory GetSpeechTranscriptor(string type)
+        private async Task<ISpeechTranscriptorFactory> GetSpeechTranscriptor(string type)
         {
-            // Uncomment to use other speech transcriptor component
             return type switch
             {
-                "whisper.net" => GetWhisperTranscriptor(),
-                //"azure fast api" => GetAzureAIFastTranscriptor(),
-                //"openai whisper" => GetOpenAITranscriptor(),
-                //"whisper onnx" => GetWhisperOnnxTranscriptor(),
-                //"sherpa onnx" => GetSherpaOnnxTranscriptor(),
+                "whisper.net" => await GetWhisperTranscriptor(),
                 _ => throw new NotSupportedException()
             };
-        }        
+        }
 
-        ISpeechTranscriptorFactory GetWhisperTranscriptor()
+        private async Task<ISpeechTranscriptorFactory> GetWhisperTranscriptor()
         {
-            // Replace with the path to the Whisper.net GGML model (Download from here): https://huggingface.co/sandrohanea/whisper.net/tree/main
-            // Or execute `downloadModels.ps1` script in the root of this repository
-            var ggmlModelPath = "models/ggml-base.bin";
-            return new WhisperSpeechTranscriptorFactory(ggmlModelPath);
+            return new WhisperSpeechTranscriptorFactory(_modelPath);
+        }
+
+        private async Task DownloadWhisperModel()
+        {
+            try
+            {
+                if (toggleButton != null)
+                {
+                    toggleButton.Enabled = false;
+                }
+                
+                if (_downloadStatusLabel != null)
+                {
+                    _downloadStatusLabel.Visible = true;
+                    _downloadStatusLabel.Text = "Downloading Whisper model...";
+                }
+
+                // Download the model if it doesn't exist
+                if (!File.Exists(_modelPath))
+                {
+                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+                    Directory.CreateDirectory(Path.GetDirectoryName(_modelPath)); // Create models directory if it doesn't exist
+                    using var fileStream = File.Create(_modelPath);
+                    await modelStream.CopyToAsync(fileStream);
+                }
+
+                _modelDownloaded = true;
+
+                if (_downloadStatusLabel != null)
+                {
+                    _downloadStatusLabel.Text = "Model ready";
+                    await Task.Delay(2000); // Show "Model ready" for 2 seconds
+                    _downloadStatusLabel.Visible = false;
+                }
+
+                if (toggleButton != null)
+                {
+                    toggleButton.Enabled = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (_downloadStatusLabel != null)
+                {
+                    _downloadStatusLabel.Text = "Error downloading model";
+                }
+                
+                MessageBox.Show($"Error downloading Whisper model: {ex.Message}", 
+                    "Download Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    
+                if (toggleButton != null)
+                {
+                    toggleButton.Enabled = true;
+                }
+            }
         }
 
         IVadDetectorFactory GetVadDetector(string vad)
@@ -426,63 +487,6 @@ namespace SPCHR
                 OperatingMode = OperatingMode.HighQuality, // The operating mode of the VAD. The default is OperatingMode.HighQuality.
             });
         }        
-
-        #region Realtime Recording and On-The-Fly Transcription
-
-        private void StartRealtimeRecording()
-        {
-            if (_waveIn != null) return;
-
-            _waveIn = new WaveInEvent
-            {
-                WaveFormat = new WaveFormat(16000, 16, 1) // 16kHz, 16-bit, mono
-            };
-
-            _waveIn.DataAvailable += WaveIn_DataAvailable;
-            _waveIn.StartRecording();
-        }
-
-        private void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
-        {
-            // Handle the data available event
-        }
-
-        private async Task StopRealtimeRecordingAndTranscribe()
-        {
-            if (_waveIn == null) return;
-
-            _waveIn.StopRecording();
-            _waveIn.Dispose();
-            _waveIn = null;
-
-            // Process any remaining unprocessed audio.
-            // ...
-        }
-
-        #endregion
-
-        // These buttons (if you choose to add them) can still start/stop recording manually.
-        private async void btnStartRecording_Click(object sender, EventArgs e)
-        {
-            if (_transcriptor == null)
-            {
-                await InitializeRealtimeTranscriptor();
-            }
-            _micAudioSource.StartRecording();
-        }
-
-        private async void btnStopRecording_Click(object sender, EventArgs e)
-        {
-            if (_micAudioSource != null)
-            {
-                _micAudioSource.StopRecording();
-                _transcriptionCancellation?.Cancel();
-                _transcriptionCancellation?.Dispose();
-                _transcriptionCancellation = null;
-                _micAudioSource.Dispose();
-                _micAudioSource = null;
-            }
-        }
 
         // Make sure to initialize RealtimeTranscriptor when the form loads.
         private async void MainForm_Load(object sender, EventArgs e)
