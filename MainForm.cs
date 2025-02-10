@@ -5,14 +5,22 @@ using Microsoft.Extensions.Configuration;
 using System.Windows.Forms;
 using System.Drawing;
 using System.IO;
-using Whisper.net;
-using Whisper.net.Ggml;
 using NAudio.Wave;
 using System.Text;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EchoSharp;
+
+using System.Globalization;
+using EchoSharp.Abstractions.SpeechTranscription;
+using EchoSharp.Abstractions.VoiceActivityDetection;
+using EchoSharp.NAudio;
+using EchoSharp.SpeechTranscription;
+using EchoSharp.WebRtc.WebRtcVadSharp;
+using EchoSharp.Whisper.net;
+using WebRtcVadSharp;
 
 namespace SPCHR
 {
@@ -22,18 +30,20 @@ namespace SPCHR
         private SpeechRecognizer? recognizer;
         private readonly IConfiguration configuration;
         private PictureBox microphoneIcon;
-        private WhisperProcessor? _processor;
+        private IRealtimeSpeechTranscriptor _transcriptor;
         private WaveInEvent? _waveIn;
+        private MicrophoneInputSource _micAudioSource;
+        private CancellationTokenSource? _transcriptionCancellation;
         // Removed: private MemoryStream? _audioStream;
         // Removed: private WaveFileWriter? _writer;
 
         // For on‐the‐fly Whisper transcription we now accumulate raw PCM bytes:
         // Instead of writing a WAV file header ourselves and then stripping it out,
         // we accumulate raw PCM bytes and then later wrap them with a proper WAV header.
-        private readonly List<byte> _rawAudioBuffer = new List<byte>();
-        private int _processedBytes = 0;
-        private readonly object _bufferLock = new object();
-        private CancellationTokenSource? _transcriptionCts;
+        // private readonly List<byte> _rawAudioBuffer = new List<byte>();
+        // private int _processedBytes = 0;
+        // private readonly object _bufferLock = new object();
+        // private CancellationTokenSource? _transcriptionCts;
 
         private bool useWhisper = false;
         
@@ -99,7 +109,7 @@ namespace SPCHR
                 if (string.IsNullOrEmpty(subscriptionKey) || string.IsNullOrEmpty(region))
                 {
                     useWhisper = true;
-                    await InitializeWhisper();
+                    await InitializeRealtimeTranscriptor();
                     return;
                 }
 
@@ -112,7 +122,7 @@ namespace SPCHR
             catch (Exception ex)
             {
                 useWhisper = true;
-                await InitializeWhisper();
+                await InitializeRealtimeTranscriptor();
                 MessageBox.Show($"Falling back to local Whisper model: {ex.Message}");
             }
         }
@@ -187,14 +197,24 @@ namespace SPCHR
             {
                 if (!isListening)
                 {
-                    StartWhisperRecording();
+                    if (_transcriptor == null)
+                    {
+                        await InitializeRealtimeTranscriptor();
+                    }
+                    _micAudioSource.StartRecording();
                     toggleButton.Text = "Stop Listening";
-                    statusLabel.Text = "Listening (Whisper)...";
+                    statusLabel.Text = "Listening (Local)...";
                     SetMicrophoneActive(true);
                 }
                 else
                 {
-                    await StopWhisperRecordingAndTranscribe();
+                    if (_micAudioSource != null)
+                    {
+                        _micAudioSource.StopRecording();
+                        _transcriptionCancellation?.Cancel();
+                        _transcriptionCancellation?.Dispose();
+                        _transcriptionCancellation = null;
+                    }
                     toggleButton.Text = "Start Listening";
                     statusLabel.Text = "Not listening";
                     SetMicrophoneActive(false);
@@ -217,7 +237,7 @@ namespace SPCHR
                     SetMicrophoneActive(false);
                 }
             }
-            
+
             isListening = !isListening;
         }
 
@@ -228,14 +248,20 @@ namespace SPCHR
 
         protected override async void OnFormClosing(FormClosingEventArgs e)
         {
-            // If we're currently listening, stop it first
+            // If we're currently listening, stop it first.
             if (isListening)
             {
                 e.Cancel = true; // Temporarily cancel closing
                 
                 if (useWhisper)
                 {
-                    await StopWhisperRecordingAndTranscribe();
+                    if (_micAudioSource != null)
+                    {
+                        _micAudioSource.StopRecording();
+                        _transcriptionCancellation?.Cancel();
+                        _transcriptionCancellation?.Dispose();
+                        _transcriptionCancellation = null;
+                    }
                 }
                 else if (recognizer != null)
                 {
@@ -243,17 +269,15 @@ namespace SPCHR
                 }
                 isListening = false;
                 
-                // Now close the form
+                // Now close the form.
                 this.Close();
                 return;
             }
 
-            // Regular cleanup
+            // Regular cleanup.
             UnregisterHotKey(this.Handle, HOTKEY_ID);
             recognizer?.Dispose();
-            _processor?.Dispose();
-            _waveIn?.Dispose();
-            // Removed disposal of _audioStream and _writer since they are no longer used.
+            _transcriptor = null;
             
             base.OnFormClosing(e);
         }
@@ -286,92 +310,126 @@ namespace SPCHR
             microphoneIcon.Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", iconName));
         }
 
-        private async Task InitializeWhisper()
+        private async Task InitializeRealtimeTranscriptor()
         {
             try
             {
-                var modelPath = Path.Combine(Application.StartupPath, "whisper-model.bin");
-                
-                if (!File.Exists(modelPath))
-                {
-                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.BaseEn);
-                    using var fileStream = File.Create(modelPath);
-                    await modelStream.CopyToAsync(fileStream);
-                }
+                // Set up the VAD detector and speech transcription factories.
+                var vadDetectorFactory = GetVadDetector("webrtc"); // Choose VAD detector method.
+                var speechTranscriptorFactory = GetSpeechTranscriptor("whisper.net"); // Choose transcription engine.
 
-                // Create the factory and build the processor correctly
-                var factory = WhisperFactory.FromPath(modelPath);
-                _processor = factory.CreateBuilder()
-                                  .WithLanguage("en")  // Set English as the default language
-                                  .Build();
+                // Create a microphone input source (deviceNumber: 0 uses the default device).
+                _micAudioSource = new MicrophoneInputSource(deviceNumber: 0);
+
+                // Get the realtime transcriptor factory from EchoSharp using the factories above.
+                var realTimeFactory = GetRealTimeTranscriptorFactory("echo sharp", speechTranscriptorFactory, vadDetectorFactory);
+
+                // Configure options for realtime transcription.
+                var options = new RealtimeSpeechTranscriptorOptions()
+                {
+                    AutodetectLanguageOnce = false,             // Detect language for each segment
+                    IncludeSpeechRecogizingEvents = true,         // Include "recognizing" events in the transcript stream
+                    RetrieveTokenDetails = true,                  // Retrieve token details if needed
+                    LanguageAutoDetect = false,                   // Do not auto-detect language (use supplied language)
+                    Language = new CultureInfo("en-US")           // Use U.S. English for transcription
+                };
+
+                // Create the realtime transcriptor.
+                _transcriptor = realTimeFactory.Create(options);
+
+                // Start the background transcription loop.
+                _transcriptionCancellation = new CancellationTokenSource();
+                Task.Run(async () =>
+                {
+                    await foreach (var segment in _transcriptor.TranscribeAsync(_micAudioSource, _transcriptionCancellation.Token))
+                    {
+                        string text = null;
+                        if (segment is RealtimeSegmentRecognizing recognizing)
+                        {
+                            text = recognizing.Segment.Text;
+                        }
+                        else if (segment is RealtimeSegmentRecognized recognized)
+                        {
+                            text = recognized.Segment.Text;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            // Ensure UI thread invocation.
+                            this.Invoke(new Action(() => PasteText(text)));
+                        }
+                    }
+                }, _transcriptionCancellation.Token);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error initializing Whisper: {ex.Message}", "Whisper Initialization Error", 
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Error initializing local transcription engine: {ex.Message}",
+                    "Local Transcription Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        #region Whisper Recording and On-The-Fly Transcription
-
-        /// <summary>
-        /// Creates a valid WAV stream (16kHz, 16-bit, mono) from raw PCM data.
-        /// </summary>
-        private MemoryStream CreateWavStream(byte[] pcmData)
+        IRealtimeSpeechTranscriptorFactory GetEchoSharpTranscriptorFactory(ISpeechTranscriptorFactory speechTranscriptorFactory, IVadDetectorFactory vadDetectorFactory)
         {
-            MemoryStream wavStream = new MemoryStream();
-            using (BinaryWriter writer = new BinaryWriter(wavStream, Encoding.ASCII, leaveOpen: true))
+            return new EchoSharpRealtimeTranscriptorFactory(speechTranscriptorFactory, vadDetectorFactory, echoSharpOptions: new EchoSharpRealtimeOptions()
             {
-                int pcmDataLength = pcmData.Length;
-                int headerSize = 44;
-                int fileSize = headerSize + pcmDataLength - 8;
-                short audioFormat = 1; // PCM
-                short numChannels = 1;
-                int sampleRate = 16000;
-                short bitsPerSample = 16;
-                int byteRate = sampleRate * numChannels * bitsPerSample / 8;
-                short blockAlign = (short)(numChannels * bitsPerSample / 8);
-
-                // Write the RIFF header.
-                writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-                writer.Write(fileSize);
-                writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-
-                // Write the fmt chunk.
-                writer.Write(Encoding.ASCII.GetBytes("fmt "));
-                writer.Write(16); // Subchunk1Size for PCM.
-                writer.Write(audioFormat);
-                writer.Write(numChannels);
-                writer.Write(sampleRate);
-                writer.Write(byteRate);
-                writer.Write(blockAlign);
-                writer.Write(bitsPerSample);
-
-                // Write the data chunk header.
-                writer.Write(Encoding.ASCII.GetBytes("data"));
-                writer.Write(pcmDataLength);
-
-                writer.Flush();
-            }
-            // Append the raw PCM data.
-            wavStream.Write(pcmData, 0, pcmData.Length);
-            wavStream.Position = 0;
-            return wavStream;
+                ConcatenateSegmentsToPrompt = false // Flag to concatenate segments to prompt when new segment is recognized (for the whole session)
+            });
         }
 
-        private void StartWhisperRecording()
+        IRealtimeSpeechTranscriptorFactory GetRealTimeTranscriptorFactory(string type, ISpeechTranscriptorFactory speechTranscriptorFactory, IVadDetectorFactory vadDetectorFactory)
+        {
+            return type switch
+            {
+                "echo sharp" => GetEchoSharpTranscriptorFactory(speechTranscriptorFactory, vadDetectorFactory),
+                //"azure" => GetAzureAIRealtimeTranscriptorFactory(),
+                _ => throw new NotSupportedException()
+            };
+        }
+
+        ISpeechTranscriptorFactory GetSpeechTranscriptor(string type)
+        {
+            // Uncomment to use other speech transcriptor component
+            return type switch
+            {
+                "whisper.net" => GetWhisperTranscriptor(),
+                //"azure fast api" => GetAzureAIFastTranscriptor(),
+                //"openai whisper" => GetOpenAITranscriptor(),
+                //"whisper onnx" => GetWhisperOnnxTranscriptor(),
+                //"sherpa onnx" => GetSherpaOnnxTranscriptor(),
+                _ => throw new NotSupportedException()
+            };
+        }        
+
+        ISpeechTranscriptorFactory GetWhisperTranscriptor()
+        {
+            // Replace with the path to the Whisper.net GGML model (Download from here): https://huggingface.co/sandrohanea/whisper.net/tree/main
+            // Or execute `downloadModels.ps1` script in the root of this repository
+            var ggmlModelPath = "models/ggml-base.bin";
+            return new WhisperSpeechTranscriptorFactory(ggmlModelPath);
+        }
+
+        IVadDetectorFactory GetVadDetector(string vad)
+        {
+            return vad switch
+            {
+                "webrtc" => GetWebRtcVadSharpDetector(),
+                _ => throw new NotSupportedException()
+            };
+        }
+
+        IVadDetectorFactory GetWebRtcVadSharpDetector()
+        {
+            return new WebRtcVadSharpDetectorFactory(new WebRtcVadSharpOptions()
+            {
+                OperatingMode = OperatingMode.HighQuality, // The operating mode of the VAD. The default is OperatingMode.HighQuality.
+            });
+        }        
+
+        #region Realtime Recording and On-The-Fly Transcription
+
+        private void StartRealtimeRecording()
         {
             if (_waveIn != null) return;
-
-            // Clear any previous data.
-            lock (_bufferLock)
-            {
-                _rawAudioBuffer.Clear();
-                _processedBytes = 0;
-            }
-
-            // Create a CancellationTokenSource for our background transcription task.
-            _transcriptionCts = new CancellationTokenSource();
 
             _waveIn = new WaveInEvent
             {
@@ -380,84 +438,14 @@ namespace SPCHR
 
             _waveIn.DataAvailable += WaveIn_DataAvailable;
             _waveIn.StartRecording();
-
-            // Start background processing of the raw PCM buffer.
-            Task.Run(() => ProcessAudioBufferAsync(_transcriptionCts.Token));
         }
 
         private void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
         {
-            lock (_bufferLock)
-            {
-                // Append exactly the recorded bytes.
-                _rawAudioBuffer.AddRange(e.Buffer.Take(e.BytesRecorded));
-            }
+            // Handle the data available event
         }
 
-        // This background task periodically checks if enough new audio data has accumulated,
-        // and if so, it passes the new data (wrapped in a valid WAV stream) to the Whisper processor.
-        private async Task ProcessAudioBufferAsync(CancellationToken ct)
-        {
-            const int MIN_CHUNK_SIZE = 32000; // ~2 seconds of 16kHz, 16-bit, mono audio.
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await Task.Delay(1000, ct);
-                }
-                catch (TaskCanceledException)
-                {
-                    break;
-                }
-
-                byte[]? chunk = null;
-                lock (_bufferLock)
-                {
-                    int available = _rawAudioBuffer.Count - _processedBytes;
-                    if (available >= MIN_CHUNK_SIZE)
-                    {
-                        chunk = _rawAudioBuffer.Skip(_processedBytes).Take(available).ToArray();
-                        _processedBytes += available;
-
-                        if (_processedBytes > 64000)
-                        {
-                            _rawAudioBuffer.RemoveRange(0, _processedBytes);
-                            _processedBytes = 0;
-                        }
-                    }
-                }
-
-                if (chunk != null && chunk.Length > 0)
-                {
-                    try
-                    {
-                        var transcribedText = new StringBuilder();
-                        using var wavStream = CreateWavStream(chunk);
-                        await foreach (var segment in _processor.ProcessAsync(wavStream))
-                        {
-                            // Skip [BLANK_AUDIO] and empty segments
-                            if (!string.IsNullOrWhiteSpace(segment.Text) && 
-                                !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
-                            {
-                                transcribedText.Append(segment.Text);
-                            }
-                        }
-                        if (transcribedText.Length > 0)
-                        {
-                            this.Invoke(() => PasteText(transcribedText.ToString()));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error during on-the-fly transcription: {ex.Message}");
-                    }
-                }
-            }
-        }
-
-        // When stopping recording, we cancel the background task and process any remaining audio.
-        private async Task StopWhisperRecordingAndTranscribe()
+        private async Task StopRealtimeRecordingAndTranscribe()
         {
             if (_waveIn == null) return;
 
@@ -465,52 +453,8 @@ namespace SPCHR
             _waveIn.Dispose();
             _waveIn = null;
 
-            if (_transcriptionCts != null)
-            {
-                _transcriptionCts.Cancel();
-                _transcriptionCts.Dispose();
-                _transcriptionCts = null;
-            }
-
             // Process any remaining unprocessed audio.
-            byte[] remaining;
-            lock (_bufferLock)
-            {
-                int available = _rawAudioBuffer.Count - _processedBytes;
-                remaining = available > 0 ? _rawAudioBuffer.Skip(_processedBytes).Take(available).ToArray() : Array.Empty<byte>();
-            }
-            if (remaining.Length > 0)
-            {
-                try
-                {
-                    var transcribedText = new StringBuilder();
-                    using var wavStream = CreateWavStream(remaining);
-                    await foreach (var segment in _processor.ProcessAsync(wavStream))
-                    {
-                        // Skip [BLANK_AUDIO] and empty segments
-                        if (!string.IsNullOrWhiteSpace(segment.Text) && 
-                            !segment.Text.Trim().Equals("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase))
-                        {
-                            transcribedText.Append(segment.Text);
-                        }
-                    }
-                    if (transcribedText.Length > 0)
-                    {
-                        this.Invoke(() => PasteText(transcribedText.ToString()));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Error transcribing final audio: {ex.Message}");
-                }
-            }
-
-            // Clear the buffer.
-            lock (_bufferLock)
-            {
-                _rawAudioBuffer.Clear();
-                _processedBytes = 0;
-            }
+            // ...
         }
 
         #endregion
@@ -518,18 +462,28 @@ namespace SPCHR
         // These buttons (if you choose to add them) can still start/stop recording manually.
         private async void btnStartRecording_Click(object sender, EventArgs e)
         {
-            StartWhisperRecording();
+            if (_transcriptor == null)
+            {
+                await InitializeRealtimeTranscriptor();
+            }
+            _micAudioSource.StartRecording();
         }
 
         private async void btnStopRecording_Click(object sender, EventArgs e)
         {
-            await StopWhisperRecordingAndTranscribe();
+            if (_micAudioSource != null)
+            {
+                _micAudioSource.StopRecording();
+                _transcriptionCancellation?.Cancel();
+                _transcriptionCancellation?.Dispose();
+                _transcriptionCancellation = null;
+            }
         }
 
-        // Make sure to initialize Whisper when the form loads.
+        // Make sure to initialize RealtimeTranscriptor when the form loads.
         private async void MainForm_Load(object sender, EventArgs e)
         {
-            await InitializeWhisper();
+            await InitializeRealtimeTranscriptor();
         }
     }
 }
