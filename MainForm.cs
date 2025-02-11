@@ -27,7 +27,9 @@ namespace SPCHR
         private MicrophoneInputSource _micAudioSource;
         private CancellationTokenSource? _transcriptionCancellation;
 
-        private string _modelPath = Path.Combine(Application.StartupPath, "models", "ggml-base.bin");
+        private string _modelPath;
+        private GgmlType _modelType = GgmlType.SmallEn;
+
 
         private bool useWhisper = false;
         
@@ -97,7 +99,8 @@ namespace SPCHR
                 {
                     useWhisper = true;
                     toggleButton.Enabled = false; // Disable until model is downloaded
-                    await DownloadWhisperModel();
+                    _modelPath = Path.Combine(Application.StartupPath, "models", $"ggml-{_modelType.ToString().ToLower()}.bin");
+                    await DownloadWhisperModel(_modelType);
                     await InitializeRealtimeTranscriptor();
                     return;
                 }
@@ -112,7 +115,8 @@ namespace SPCHR
             {
                 useWhisper = true;
                 toggleButton.Enabled = false; // Disable until model is downloaded
-                await DownloadWhisperModel();
+                _modelPath = Path.Combine(Application.StartupPath, "models", $"ggml-{_modelType.ToString().ToLower()}.bin");
+                await DownloadWhisperModel(_modelType);
                 await InitializeRealtimeTranscriptor();
                 MessageBox.Show($"Falling back to local Whisper model: {ex.Message}");
             }
@@ -369,11 +373,12 @@ namespace SPCHR
                             text = recognized.Segment.Text;
                         }
 
-                        if (!string.IsNullOrWhiteSpace(text) && !text.Contains("[BLANK_AUDIO]") && !text.Contains("[SILENCE]"))
+                        if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
                         {
                             // Ensure UI thread invocation.
                             this.Invoke(new Action(() => PasteText(text)));
                         }
+
                     }
                 }, _transcriptionCancellation.Token);
             }
@@ -416,7 +421,7 @@ namespace SPCHR
             return new WhisperSpeechTranscriptorFactory(_modelPath);
         }
 
-        private async Task DownloadWhisperModel()
+        private async Task DownloadWhisperModel(GgmlType modelType)
         {
             try
             {
@@ -434,7 +439,7 @@ namespace SPCHR
                 // Download the model if it doesn't exist
                 if (!File.Exists(_modelPath))
                 {
-                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+                    using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(modelType);
                     Directory.CreateDirectory(Path.GetDirectoryName(_modelPath)); // Create models directory if it doesn't exist
                     using var fileStream = File.Create(_modelPath);
                     await modelStream.CopyToAsync(fileStream);
