@@ -359,11 +359,11 @@ namespace SPCHR
 
                 // Start the background transcription loop.
                 _transcriptionCancellation = new CancellationTokenSource();
-                Task.Run(async () =>
+                _ = Task.Run(async () =>
                 {
                     await foreach (var segment in _transcriptor.TranscribeAsync(_micAudioSource, _transcriptionCancellation.Token))
                     {
-                        string text = null;
+                        string text = string.Empty;
                         if (segment is RealtimeSegmentRecognizing recognizing)
                         {
                             //text = recognizing.Segment.Text;
