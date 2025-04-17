@@ -92,6 +92,13 @@ namespace SPCHR
                 Icon = this.Icon,
                 Visible = true
             };
+            
+            // Add context menu to tray icon
+            var contextMenu = new ContextMenuStrip();
+            var exitMenuItem = new ToolStripMenuItem("Exit");
+            exitMenuItem.Click += (s, e) => Application.Exit();
+            contextMenu.Items.Add(exitMenuItem);
+            trayIcon.ContextMenuStrip = contextMenu;
 
             InitializeMicrophoneIcon();
             RegisterGlobalHotKey();
@@ -510,6 +517,16 @@ namespace SPCHR
         private async void MainForm_Load(object sender, EventArgs e)
         {
             await InitializeRealtimeTranscriptor();
+        }
+
+        private void TrayIcon_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                this.Show();
+                this.WindowState = FormWindowState.Normal;
+                this.Activate();
+            }
         }
     }
 }
