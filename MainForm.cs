@@ -16,6 +16,7 @@ using WebRtcVadSharp;
 using System.Runtime.Versioning;
 using System.ComponentModel;
 using System.Windows.Forms;
+using System.Drawing.Imaging;
 
 namespace SPCHR
 {
@@ -62,6 +63,27 @@ namespace SPCHR
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest, IntPtr hdcSrc, int xSrc, int ySrc, int rop);
+
+        // RECT structure
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int left, top, right, bottom;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
+
+        private const int SRCCOPY = 0x00CC0020; // BitBlt raster operation code
 
         private const uint GA_ROOT = 2; // Retrieves the top-level window
 
@@ -227,8 +249,9 @@ namespace SPCHR
                 // Get the process ID of the foreground window
                 GetWindowThreadProcessId(foregroundWindow, out int processId);
                 System.Diagnostics.Debug.WriteLine($"Foreground window process ID: {processId}");
-                
+
                 //SetForegroundWindow(foregroundWindow);
+                GetScreenshot(foregroundWindow);
                 return;
             }
             
@@ -249,6 +272,39 @@ namespace SPCHR
             {
                 System.Diagnostics.Debug.WriteLine("Failed to retrieve top-level parent window.");
             }
+
+            GetScreenshot(topLevelParent);
+        }
+
+        private void GetScreenshot(nint topLevelParent)
+        {
+            if (!GetWindowRect(topLevelParent, out RECT rect))
+            {
+                System.Diagnostics.Debug.WriteLine("Failed to get window dimensions.");
+                return;
+            }
+
+            int width = rect.right - rect.left;
+            int height = rect.bottom - rect.top;
+
+            if (width <= 0 || height <= 0)
+            {
+                System.Diagnostics.Debug.WriteLine("Invalid window size.");
+                return;
+            }
+
+            Bitmap screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            using (Graphics gfx = Graphics.FromImage(screenshot))
+            {
+                IntPtr hdcBitmap = gfx.GetHdc();
+                IntPtr hdcWindow = GetDC(topLevelParent);
+                BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY);
+                ReleaseDC(topLevelParent, hdcWindow);
+                gfx.ReleaseHdc(hdcBitmap);
+            }
+
+            // Save or display the image
+            screenshot.Save(string.Format("screenshot_{0}.png", DateTime.Now.Ticks), ImageFormat.Png);
         }
 
         private void RegisterGlobalHotKey()
