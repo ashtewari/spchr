@@ -13,6 +13,9 @@ using EchoSharp.SpeechTranscription;
 using EchoSharp.WebRtc.WebRtcVadSharp;
 using EchoSharp.Whisper.net;
 using WebRtcVadSharp;
+using System.Runtime.Versioning;
+using System.ComponentModel;
+using System.Windows.Forms;
 
 namespace SPCHR
 {
@@ -57,6 +60,7 @@ namespace SPCHR
 
         private bool _modelDownloaded = false;
         private Label _downloadStatusLabel;
+        private NotifyIcon trayIcon;
 
         public MainForm()
         {
@@ -69,23 +73,44 @@ namespace SPCHR
             InitializeComponent(); // This needs to happen before we access any controls
             
             // Update form properties
-            this.FormBorderStyle = FormBorderStyle.FixedToolWindow;
+            this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.TopMost = true;
-            this.ShowInTaskbar = false;
-            this.MinimizeBox = false;
+            this.ShowInTaskbar = true;
+            this.MinimizeBox = true;
             this.MaximizeBox = false;
             this.ControlBox = true;
             this.StartPosition = FormStartPosition.Manual;
 
-            Rectangle workingArea = Screen.GetWorkingArea(this);
-            this.Location = new Point(
-                workingArea.Right - this.Width - 20,
-                workingArea.Top + 20
-            );
+            //Rectangle workingArea = Screen.GetWorkingArea(this);
+            //this.Location = new Point(
+            //    workingArea.Right - this.Width - 20,
+            //    workingArea.Top + 20
+            //);
+
+            trayIcon = new NotifyIcon()
+            {
+                Icon = this.Icon,
+                Visible = true
+            };
 
             InitializeMicrophoneIcon();
             RegisterGlobalHotKey();
             InitializeSpeechRecognizer();
+        }
+
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            if (this.WindowState == FormWindowState.Minimized)
+            {
+                this.Hide(); // Hide the form when minimized
+                trayIcon.Visible = true;
+            }
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            trayIcon.Visible = false; // Hide the tray icon when closing the form
+            base.OnClosing(e);
         }
 
         private async void InitializeSpeechRecognizer()
@@ -164,19 +189,7 @@ namespace SPCHR
 
         protected override void WndProc(ref Message m)
         {
-            const int WM_SYSCOMMAND = 0x0112;
-            const int SC_MINIMIZE = 0xF020;
-
-            if (m.Msg == WM_SYSCOMMAND)
-            {
-                int command = m.WParam.ToInt32() & 0xFFF0;
-                if (command == SC_MINIMIZE)
-                {
-                    return; // Ignore minimize command
-                }
-            }
-
-            // Hotkey handling remains unchanged.
+            // Hotkey handling
             const int WM_HOTKEY = 0x0312;
             if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
             {
