@@ -48,6 +48,23 @@ namespace SPCHR
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetFocus();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        private const uint GA_ROOT = 2; // Retrieves the top-level window
+
         // Modifiers for hotkeys
         private const uint MOD_ALT = 0x0001;
         private const uint MOD_CONTROL = 0x0002;
@@ -156,6 +173,7 @@ namespace SPCHR
 
         private void Recognizer_Recognized(object? sender, SpeechRecognitionEventArgs e)
         {
+            GetTopLevelParentWindow();
             if (e.Result.Reason == ResultReason.RecognizedSpeech)
             {
                 string recognizedText = e.Result.Text;
@@ -169,13 +187,68 @@ namespace SPCHR
 
         private void PasteText(string text)
         {
-            Clipboard.SetText(text);
+            try
+            {
+                GetTopLevelParentWindow(); // This now gets and sets focus to the appropriate window
+                
+                // Set the text to clipboard
+                Clipboard.SetText(text);
+                
+                // Small delay to ensure clipboard is ready
+                System.Threading.Thread.Sleep(50);
+                
+                // Simulate Ctrl+V
+                keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+                keybd_event(VK_V, 0, 0, UIntPtr.Zero);
+                keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error pasting text: {ex.Message}");
+            }
+        }
+
+        private void GetTopLevelParentWindow()
+        {
+            // First try to get the current foreground window
+            IntPtr foregroundWindow = GetForegroundWindow();
             
-            // Simulate Ctrl+V
-            keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
-            keybd_event(VK_V, 0, 0, UIntPtr.Zero);
-            keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            // Try to get text from the window for diagnostic purposes
+            var windowTitle = new System.Text.StringBuilder(256);
+            if (GetWindowText(foregroundWindow, windowTitle, windowTitle.Capacity) > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"Foreground window title: {windowTitle}");
+            }
+            
+            if (foregroundWindow != IntPtr.Zero)
+            {
+                System.Diagnostics.Debug.WriteLine($"Foreground window handle: {foregroundWindow}");
+                // Get the process ID of the foreground window
+                GetWindowThreadProcessId(foregroundWindow, out int processId);
+                System.Diagnostics.Debug.WriteLine($"Foreground window process ID: {processId}");
+                
+                //SetForegroundWindow(foregroundWindow);
+                return;
+            }
+            
+            // Fall back to GetFocus if GetForegroundWindow failed
+            IntPtr focusedHandle = GetFocus();
+            if (focusedHandle == IntPtr.Zero)
+            {
+                System.Diagnostics.Debug.WriteLine("No control is currently focused.");
+                return;
+            }
+
+            IntPtr topLevelParent = GetAncestor(focusedHandle, GA_ROOT);
+            if (topLevelParent != IntPtr.Zero)
+            {
+                System.Diagnostics.Debug.WriteLine($"Top-level parent window handle: {topLevelParent}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("Failed to retrieve top-level parent window.");
+            }
         }
 
         private void RegisterGlobalHotKey()
@@ -396,7 +469,10 @@ namespace SPCHR
                         if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
                         {
                             // Ensure UI thread invocation.
-                            this.Invoke(new Action(() => PasteText(text)));
+                            this.Invoke(new Action(() => {
+                                GetTopLevelParentWindow();
+                                PasteText(text);
+                            }));
                         }
 
                     }
