@@ -13,10 +13,11 @@ using EchoSharp.SpeechTranscription;
 using EchoSharp.WebRtc.WebRtcVadSharp;
 using EchoSharp.Whisper.net;
 using WebRtcVadSharp;
-using System.Runtime.Versioning;
 using System.ComponentModel;
-using System.Windows.Forms;
 using System.Drawing.Imaging;
+using System.Text;
+using Newtonsoft.Json;
+using SPCHR.Services;
 
 namespace SPCHR
 {
@@ -34,6 +35,9 @@ namespace SPCHR
         private string _modelPath;
         private GgmlType _modelType = GgmlType.SmallEn;
 
+        // OpenAI and Semantic Kernel
+        private IOpenAIVisionService _openAIService;
+        private bool _useOpenAiVision = true;
 
         private bool useWhisper = false;
         
@@ -101,6 +105,8 @@ namespace SPCHR
         private Label _downloadStatusLabel;
         private NotifyIcon trayIcon;
 
+        private CheckBox openAICheckBox;
+
         public MainForm()
         {
             configuration = new ConfigurationBuilder()
@@ -108,6 +114,14 @@ namespace SPCHR
                 .AddJsonFile("appsettings.json")
                 .AddJsonFile("appsettings.Development.json", optional: true)
                 .Build();
+
+            // Initialize OpenAI settings
+            _openAIService = new OpenAIVisionService(configuration["OpenAI:ApiKey"], configuration["OpenAI:Model"] ?? "o4-mini", configuration["OpenAI:Endpoint"] ?? "https://api.openai.com/");
+            
+            if (string.IsNullOrEmpty(_openAIService.ApiKey))
+            {
+                _useOpenAiVision = false; // Disable OpenAI if no API key
+            }
 
             InitializeComponent(); // This needs to happen before we access any controls
             
@@ -142,6 +156,22 @@ namespace SPCHR
             InitializeMicrophoneIcon();
             RegisterGlobalHotKey();
             InitializeSpeechRecognizer();
+
+            // Add OpenAI Checkbox (after InitializeComponent has been called)
+            this.openAICheckBox = new CheckBox();
+            this.openAICheckBox.AutoSize = true;
+            this.openAICheckBox.Location = new Point(12, 70);
+            this.openAICheckBox.Name = "openAICheckBox";
+            this.openAICheckBox.Size = new Size(180, 19);
+            this.openAICheckBox.TabIndex = 3;
+            this.openAICheckBox.Text = "Use OpenAI to enhance text";
+            this.openAICheckBox.UseVisualStyleBackColor = true;
+            this.openAICheckBox.Checked = _useOpenAiVision;
+            this.openAICheckBox.CheckedChanged += new EventHandler(this.openAICheckBox_CheckedChanged);
+            this.openAICheckBox.Enabled = !string.IsNullOrEmpty(_openAIService.ApiKey);
+            
+            // Add the checkbox to controls
+            this.Controls.Add(this.openAICheckBox);
         }
 
         private void MainForm_Resize(object sender, EventArgs e)
@@ -195,14 +225,16 @@ namespace SPCHR
 
         private void Recognizer_Recognized(object? sender, SpeechRecognitionEventArgs e)
         {
-            GetTopLevelParentWindow();
             if (e.Result.Reason == ResultReason.RecognizedSpeech)
             {
                 string recognizedText = e.Result.Text;
                 if (!string.IsNullOrEmpty(recognizedText))
                 {
                     Console.Write(recognizedText);
-                    this.Invoke(() => PasteText(recognizedText));
+                    this.Invoke(() =>
+                    {
+                        ProcessResults(recognizedText);
+                    });
                 }
             }
         }
@@ -231,7 +263,7 @@ namespace SPCHR
             }
         }
 
-        private void GetTopLevelParentWindow()
+        private nint GetTopLevelParentWindow()
         {
             // First try to get the current foreground window
             IntPtr foregroundWindow = GetForegroundWindow();
@@ -251,8 +283,8 @@ namespace SPCHR
                 System.Diagnostics.Debug.WriteLine($"Foreground window process ID: {processId}");
 
                 //SetForegroundWindow(foregroundWindow);
-                GetScreenshot(foregroundWindow);
-                return;
+                
+                return foregroundWindow;
             }
             
             // Fall back to GetFocus if GetForegroundWindow failed
@@ -260,10 +292,10 @@ namespace SPCHR
             if (focusedHandle == IntPtr.Zero)
             {
                 System.Diagnostics.Debug.WriteLine("No control is currently focused.");
-                return;
+                return focusedHandle;
             }
 
-            IntPtr topLevelParent = GetAncestor(focusedHandle, GA_ROOT);
+            IntPtr topLevelParent = GetAncestor(focusedHandle, GA_ROOT);  
             if (topLevelParent != IntPtr.Zero)
             {
                 System.Diagnostics.Debug.WriteLine($"Top-level parent window handle: {topLevelParent}");
@@ -273,38 +305,7 @@ namespace SPCHR
                 System.Diagnostics.Debug.WriteLine("Failed to retrieve top-level parent window.");
             }
 
-            GetScreenshot(topLevelParent);
-        }
-
-        private void GetScreenshot(nint topLevelParent)
-        {
-            if (!GetWindowRect(topLevelParent, out RECT rect))
-            {
-                System.Diagnostics.Debug.WriteLine("Failed to get window dimensions.");
-                return;
-            }
-
-            int width = rect.right - rect.left;
-            int height = rect.bottom - rect.top;
-
-            if (width <= 0 || height <= 0)
-            {
-                System.Diagnostics.Debug.WriteLine("Invalid window size.");
-                return;
-            }
-
-            Bitmap screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-            using (Graphics gfx = Graphics.FromImage(screenshot))
-            {
-                IntPtr hdcBitmap = gfx.GetHdc();
-                IntPtr hdcWindow = GetDC(topLevelParent);
-                BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY);
-                ReleaseDC(topLevelParent, hdcWindow);
-                gfx.ReleaseHdc(hdcBitmap);
-            }
-
-            // Save or display the image
-            screenshot.Save(string.Format("screenshot_{0}.png", DateTime.Now.Ticks), ImageFormat.Png);
+            return topLevelParent;
         }
 
         private void RegisterGlobalHotKey()
@@ -525,9 +526,9 @@ namespace SPCHR
                         if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
                         {
                             // Ensure UI thread invocation.
-                            this.Invoke(new Action(() => {
-                                GetTopLevelParentWindow();
-                                PasteText(text);
+                            this.Invoke(new Action(() =>
+                            {
+                                ProcessResults(text);
                             }));
                         }
 
@@ -538,6 +539,126 @@ namespace SPCHR
             {
                 MessageBox.Show($"Error initializing local transcription engine: {ex.Message}",
                     "Local Transcription Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async void ProcessResults(string text)
+        {
+            var wHandle = GetTopLevelParentWindow();
+            string screenshotPath = CaptureScreenshot(wHandle);
+            
+            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && File.Exists(screenshotPath))
+            {
+                try
+                {
+                    statusLabel.Text = "Processing with OpenAI...";
+                    Application.DoEvents(); // Update UI
+                    
+                    string enhancedText = await _openAIService.EnhanceText(text, screenshotPath);
+                    
+                    if (!string.IsNullOrEmpty(enhancedText))
+                    {
+                        statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
+                        PasteText(enhancedText);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error calling OpenAI: {ex.Message}");
+                    statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
+                    // Fallback to original text if OpenAI fails
+                }
+            }
+            
+            // Fallback to original functionality
+            PasteText(text);
+        }
+        private void CleanupOldScreenshots()
+        {
+            try
+            {
+                string screenshotsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Screenshots");
+                if (!Directory.Exists(screenshotsDir))
+                    return;
+                
+                var files = Directory.GetFiles(screenshotsDir, "screenshot_*.png");
+                
+                // Sort by creation time (oldest first)
+                var orderedFiles = files
+                    .Select(f => new FileInfo(f))
+                    .OrderBy(f => f.CreationTime)
+                    .ToList();
+                
+                // Keep only the 20 most recent files
+                int filesToDelete = orderedFiles.Count - 20;
+                if (filesToDelete > 0)
+                {
+                    for (int i = 0; i < filesToDelete; i++)
+                    {
+                        try
+                        {
+                            File.Delete(orderedFiles[i].FullName);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Failed to delete old screenshot: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error cleaning up screenshots: {ex.Message}");
+            }
+        }
+
+        private string CaptureScreenshot(nint topLevelParent)
+        {
+            try
+            {
+                if (!GetWindowRect(topLevelParent, out RECT rect))
+                {
+                    System.Diagnostics.Debug.WriteLine("Failed to get window dimensions.");
+                    return string.Empty;
+                }
+
+                int width = rect.right - rect.left;
+                int height = rect.bottom - rect.top;
+
+                if (width <= 0 || height <= 0)
+                {
+                    System.Diagnostics.Debug.WriteLine("Invalid window size.");
+                    return string.Empty;
+                }
+
+                Bitmap screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                using (Graphics gfx = Graphics.FromImage(screenshot))
+                {
+                    IntPtr hdcBitmap = gfx.GetHdc();
+                    IntPtr hdcWindow = GetDC(topLevelParent);
+                    BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY);
+                    ReleaseDC(topLevelParent, hdcWindow);
+                    gfx.ReleaseHdc(hdcBitmap);
+                }
+
+                // Create screenshots directory if it doesn't exist
+                string screenshotsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Screenshots");
+                Directory.CreateDirectory(screenshotsDir);
+
+                // Save the image with a timestamp
+                string filePath = Path.Combine(screenshotsDir, $"screenshot_{DateTime.Now.Ticks}.png");
+                screenshot.Save(filePath, ImageFormat.Png);
+                
+                // Clean up old screenshots to prevent disk space issues
+                CleanupOldScreenshots();
+                
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error capturing screenshot: {ex.Message}");
+                return string.Empty;
             }
         }
 
@@ -658,6 +779,19 @@ namespace SPCHR
                 this.Show();
                 this.WindowState = FormWindowState.Normal;
                 this.Activate();
+            }
+        }
+
+        private void openAICheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            _useOpenAiVision = openAICheckBox.Checked;
+            
+            if (_useOpenAiVision && string.IsNullOrEmpty(_openAIService.ApiKey))
+            {
+                MessageBox.Show("Please provide an OpenAI API key in the appsettings.json file.", 
+                    "OpenAI Configuration", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                openAICheckBox.Checked = false;
+                _useOpenAiVision = false;
             }
         }
     }
