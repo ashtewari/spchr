@@ -199,6 +199,28 @@ namespace SPCHR
             base.OnClosing(e);
         }
 
+        private void LogMicrophoneDevice(string context)
+        {
+            try
+            {
+                if (WaveInEvent.DeviceCount > 0)
+                {
+                    var capabilities = WaveInEvent.GetCapabilities(0);
+                    System.Diagnostics.Debug.WriteLine($"{context} using microphone: {capabilities.ProductName}");
+                    Console.WriteLine($"{context} using microphone: {capabilities.ProductName}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"No microphone devices found for {context}");
+                    Console.WriteLine($"No microphone devices found for {context}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to get microphone name for {context}: {ex.Message}");
+            }
+        }
+
         private async void InitializeSpeechRecognizer()
         {
             try
@@ -218,6 +240,10 @@ namespace SPCHR
 
                 var config = SpeechConfig.FromSubscription(subscriptionKey, region);
                 var audioConfig = AudioConfig.FromDefaultMicrophoneInput();
+                
+                // Log the microphone device name for Azure Speech Services
+                LogMicrophoneDevice("Azure Speech");
+                
                 recognizer = new SpeechRecognizer(config, audioConfig);
 
                 recognizer.Recognized += Recognizer_Recognized;
@@ -507,6 +533,9 @@ namespace SPCHR
                 {
                     throw new Exception("Failed to create microphone input source.");
                 }
+
+                // Log the microphone device name
+                LogMicrophoneDevice("local");
 
                 // Get the realtime transcriptor factory from EchoSharp using the factories above.
                 var realTimeFactory = await GetRealTimeTranscriptorFactory("echo sharp", speechTranscriptorFactory, vadDetectorFactory);
