@@ -267,31 +267,70 @@ namespace SPCHR
                 if (!string.IsNullOrEmpty(recognizedText))
                 {
                     Console.Write(recognizedText);
-                    this.Invoke(() =>
+                    this.Invoke(async () =>
                     {
-                        ProcessResults(recognizedText);
+                        await ProcessResults(recognizedText);
                     });
                 }
             }
         }
 
-        private void PasteText(string text)
+        private async Task PasteText(string text)
         {
             try
             {
+                if (string.IsNullOrEmpty(text))
+                {
+                    System.Diagnostics.Debug.WriteLine("Cannot paste empty text");
+                    return;
+                }
+
+                // Save current clipboard content
+                string originalClipboard = null;
+                bool hadClipboardContent = false;
+                
+                try
+                {
+                    if (Clipboard.ContainsText())
+                    {
+                        originalClipboard = Clipboard.GetText();
+                        hadClipboardContent = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Warning: Could not read current clipboard content: {ex.Message}");
+                }
+
                 GetTopLevelParentWindow(); // This now gets and sets focus to the appropriate window
                 
                 // Set the text to clipboard
                 Clipboard.SetText(text);
                 
                 // Small delay to ensure clipboard is ready
-                System.Threading.Thread.Sleep(50);
+                await Task.Delay(50);
                 
                 // Simulate Ctrl+V
                 keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
                 keybd_event(VK_V, 0, 0, UIntPtr.Zero);
                 keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                 keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+
+                // Wait for paste operation to complete before restoring clipboard
+                await Task.Delay(100);
+
+                // Restore original clipboard content
+                if (hadClipboardContent && originalClipboard != null)
+                {
+                    try
+                    {
+                        Clipboard.SetText(originalClipboard);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not restore original clipboard content: {ex.Message}");
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -572,9 +611,9 @@ namespace SPCHR
                         if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
                         {
                             // Ensure UI thread invocation.
-                            this.Invoke(new Action(() =>
+                            this.Invoke(new Action(async () =>
                             {
-                                ProcessResults(text);
+                                await ProcessResults(text);
                             }));
                         }
 
@@ -588,7 +627,7 @@ namespace SPCHR
             }
         }
 
-        private async void ProcessResults(string text)
+        private async Task ProcessResults(string text)
         {
             TakeScreenshotOfParentWindow();
 
@@ -604,7 +643,7 @@ namespace SPCHR
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
                         statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
-                        PasteText(enhancedText);
+                        await PasteText(enhancedText);
                         return;
                     }
                 }
@@ -617,7 +656,7 @@ namespace SPCHR
             }
 
             // Fallback to original functionality
-            PasteText(text);
+            await PasteText(text);
         }
 
         private void TakeScreenshotOfParentWindow()
