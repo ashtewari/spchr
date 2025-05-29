@@ -77,6 +77,14 @@ namespace SPCHR
         [DllImport("gdi32.dll")]
         private static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest, IntPtr hdcSrc, int xSrc, int ySrc, int rop);
 
+        // Add PrintWindow API import near other DLL imports
+        [DllImport("user32.dll")]
+        private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+
+        // Constants for PrintWindow
+        private const uint PW_CLIENTONLY = 0x00000001;
+        private const uint PW_RENDERFULLCONTENT = 0x00000002;
+
         // RECT structure
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -106,6 +114,8 @@ namespace SPCHR
         private NotifyIcon trayIcon;
 
         private CheckBox openAICheckBox;
+
+        private string _screenshotPath;
 
         public MainForm()
         {
@@ -354,6 +364,7 @@ namespace SPCHR
                     toggleButton.Text = "Stop Listening";
                     statusLabel.Text = "Listening (Local)...";
                     SetMicrophoneActive(true);
+                    TakeScreenshotOfParentWindow();
                 }
                 else
                 {
@@ -379,6 +390,7 @@ namespace SPCHR
                     toggleButton.Text = "Stop Listening";
                     statusLabel.Text = "Listening (Azure)...";
                     SetMicrophoneActive(true);
+                    TakeScreenshotOfParentWindow();
                 }
                 else
                 {
@@ -491,6 +503,11 @@ namespace SPCHR
                 // Create a microphone input source (deviceNumber: 0 uses the default device).
                 _micAudioSource = new MicrophoneInputSource(deviceNumber: 0);
 
+                if(_micAudioSource == null)
+                {
+                    throw new Exception("Failed to create microphone input source.");
+                }
+
                 // Get the realtime transcriptor factory from EchoSharp using the factories above.
                 var realTimeFactory = await GetRealTimeTranscriptorFactory("echo sharp", speechTranscriptorFactory, vadDetectorFactory);
 
@@ -544,18 +561,17 @@ namespace SPCHR
 
         private async void ProcessResults(string text)
         {
-            var wHandle = GetTopLevelParentWindow();
-            string screenshotPath = CaptureScreenshot(wHandle);
-            
-            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && File.Exists(screenshotPath))
+            TakeScreenshotOfParentWindow();
+
+            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && File.Exists(_screenshotPath))
             {
                 try
                 {
                     statusLabel.Text = "Processing with OpenAI...";
                     Application.DoEvents(); // Update UI
-                    
-                    string enhancedText = await _openAIService.EnhanceText(text, screenshotPath);
-                    
+
+                    string enhancedText = await _openAIService.EnhanceText(text, _screenshotPath);
+
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
                         statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
@@ -570,10 +586,17 @@ namespace SPCHR
                     // Fallback to original text if OpenAI fails
                 }
             }
-            
+
             // Fallback to original functionality
             PasteText(text);
         }
+
+        private void TakeScreenshotOfParentWindow()
+        {
+            var wHandle = GetTopLevelParentWindow();
+            _screenshotPath = CaptureScreenshotByWindowHandle(wHandle);
+        }
+
         private void CleanupOldScreenshots()
         {
             try
@@ -613,7 +636,7 @@ namespace SPCHR
             }
         }
 
-        private string CaptureScreenshot(nint topLevelParent)
+        private string CaptureScreenshotByWindowHandle(nint topLevelParent)
         {
             try
             {
@@ -632,14 +655,113 @@ namespace SPCHR
                     return string.Empty;
                 }
 
-                Bitmap screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-                using (Graphics gfx = Graphics.FromImage(screenshot))
+                Bitmap screenshot = null;
+                bool captureSuccessful = false;
+
+                // Method 1: Try PrintWindow API first (works best with modern applications)
+                try
                 {
-                    IntPtr hdcBitmap = gfx.GetHdc();
-                    IntPtr hdcWindow = GetDC(topLevelParent);
-                    BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY);
-                    ReleaseDC(topLevelParent, hdcWindow);
-                    gfx.ReleaseHdc(hdcBitmap);
+                    screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                    using (Graphics gfx = Graphics.FromImage(screenshot))
+                    {
+                        IntPtr hdcBitmap = gfx.GetHdc();
+                        // Try with PW_RENDERFULLCONTENT flag first (better for complex apps)
+                        if (PrintWindow(topLevelParent, hdcBitmap, PW_RENDERFULLCONTENT))
+                        {
+                            captureSuccessful = true;
+                            System.Diagnostics.Debug.WriteLine("Screenshot captured using PrintWindow with PW_RENDERFULLCONTENT");
+                        }
+                        // Fallback to standard PrintWindow
+                        else if (PrintWindow(topLevelParent, hdcBitmap, 0))
+                        {
+                            captureSuccessful = true;
+                            System.Diagnostics.Debug.WriteLine("Screenshot captured using PrintWindow (standard)");
+                        }
+                        gfx.ReleaseHdc(hdcBitmap);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"PrintWindow method failed: {ex.Message}");
+                    screenshot?.Dispose();
+                    screenshot = null;
+                }
+
+                // Method 2: Try Graphics.CopyFromScreen if PrintWindow failed
+                if (!captureSuccessful)
+                {
+                    try
+                    {
+                        screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                        using (Graphics gfx = Graphics.FromImage(screenshot))
+                        {
+                            gfx.CopyFromScreen(rect.left, rect.top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
+                            captureSuccessful = true;
+                            System.Diagnostics.Debug.WriteLine("Screenshot captured using Graphics.CopyFromScreen");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"CopyFromScreen method failed: {ex.Message}");
+                        screenshot?.Dispose();
+                        screenshot = null;
+                    }
+                }
+
+                // Method 3: Fallback to original BitBlt method
+                if (!captureSuccessful)
+                {
+                    try
+                    {
+                        screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                        using (Graphics gfx = Graphics.FromImage(screenshot))
+                        {
+                            IntPtr hdcBitmap = gfx.GetHdc();
+                            IntPtr hdcWindow = GetDC(topLevelParent);
+                            if (BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY))
+                            {
+                                captureSuccessful = true;
+                                System.Diagnostics.Debug.WriteLine("Screenshot captured using BitBlt (fallback)");
+                            }
+                            ReleaseDC(topLevelParent, hdcWindow);
+                            gfx.ReleaseHdc(hdcBitmap);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"BitBlt method failed: {ex.Message}");
+                        screenshot?.Dispose();
+                        return string.Empty;
+                    }
+                }
+
+                if (!captureSuccessful || screenshot == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("All screenshot capture methods failed.");
+                    return string.Empty;
+                }
+
+                // Check if the screenshot is completely black (common issue with some methods)
+                if (IsImageBlank(screenshot))
+                {
+                    System.Diagnostics.Debug.WriteLine("Screenshot appears to be blank, attempting alternative capture...");
+                    screenshot.Dispose();
+                    
+                    // Try CopyFromScreen as last resort for blank images
+                    try
+                    {
+                        screenshot = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                        using (Graphics gfx = Graphics.FromImage(screenshot))
+                        {
+                            gfx.CopyFromScreen(rect.left, rect.top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Final fallback method failed: {ex.Message}");
+                        screenshot?.Dispose();
+                        return string.Empty;
+                    }
                 }
 
                 // Create screenshots directory if it doesn't exist
@@ -649,6 +771,7 @@ namespace SPCHR
                 // Save the image with a timestamp
                 string filePath = Path.Combine(screenshotsDir, $"screenshot_{DateTime.Now.Ticks}.png");
                 screenshot.Save(filePath, ImageFormat.Png);
+                screenshot.Dispose();
                 
                 // Clean up old screenshots to prevent disk space issues
                 CleanupOldScreenshots();
@@ -659,6 +782,40 @@ namespace SPCHR
             {
                 System.Diagnostics.Debug.WriteLine($"Error capturing screenshot: {ex.Message}");
                 return string.Empty;
+            }
+        }
+
+        // Helper method to check if an image is blank/black
+        private bool IsImageBlank(Bitmap bitmap)
+        {
+            try
+            {
+                // Sample a few pixels to check if the image is mostly black/blank
+                int sampleCount = 0;
+                int blackPixelCount = 0;
+                int step = Math.Max(1, bitmap.Width / 10); // Sample every 10th pixel
+
+                for (int x = 0; x < bitmap.Width; x += step)
+                {
+                    for (int y = 0; y < bitmap.Height; y += step)
+                    {
+                        Color pixel = bitmap.GetPixel(x, y);
+                        sampleCount++;
+                        
+                        // Consider a pixel "black" if all RGB components are very low
+                        if (pixel.R < 10 && pixel.G < 10 && pixel.B < 10)
+                        {
+                            blackPixelCount++;
+                        }
+                    }
+                }
+
+                // If more than 90% of sampled pixels are black, consider the image blank
+                return sampleCount > 0 && (blackPixelCount / (double)sampleCount) > 0.9;
+            }
+            catch
+            {
+                return false; // If we can't check, assume it's not blank
             }
         }
 
