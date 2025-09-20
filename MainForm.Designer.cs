@@ -6,9 +6,15 @@ namespace SPCHR
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing && (components != null))
+            if (disposing)
             {
-                components.Dispose();
+                // Dispose of tray icon if it exists
+                DisposeTrayIcon();
+                
+                if (components != null)
+                {
+                    components.Dispose();
+                }
             }
             base.Dispose(disposing);
         }
@@ -78,5 +84,6 @@ namespace SPCHR
         private Button settingsButton;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel toolStripStatusLabel1;
+        private NotifyIcon trayIcon;
     }
 } 

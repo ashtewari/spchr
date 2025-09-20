@@ -115,7 +115,6 @@ namespace SPCHR
 
         private bool _modelDownloaded = false;
         private Label _downloadStatusLabel;
-        private NotifyIcon trayIcon;
 
         private CheckBox openAICheckBox;
 
@@ -173,7 +172,12 @@ namespace SPCHR
             contextMenu.Items.Add(hotkeyInfoMenuItem);
             
             var exitMenuItem = new ToolStripMenuItem("Exit");
-            exitMenuItem.Click += (s, e) => Application.Exit();
+            exitMenuItem.Click += (s, e) => 
+            {
+                // Ensure proper cleanup before exiting
+                DisposeTrayIcon();
+                Application.Exit();
+            };
             contextMenu.Items.Add(exitMenuItem);
             trayIcon.ContextMenuStrip = contextMenu;
 
@@ -210,7 +214,8 @@ namespace SPCHR
 
         protected override void OnClosing(CancelEventArgs e)
         {
-            trayIcon.Visible = false; // Hide the tray icon when closing the form
+            // Properly dispose of the tray icon when closing the form
+            DisposeTrayIcon();
             base.OnClosing(e);
         }
 
@@ -610,6 +615,9 @@ namespace SPCHR
             _transcriptor = null;
             _micAudioSource?.Dispose();
             
+            // Ensure tray icon is properly disposed
+            DisposeTrayIcon();
+            
             base.OnFormClosing(e);
         }
 
@@ -763,6 +771,19 @@ namespace SPCHR
         {
             var wHandle = GetTopLevelParentWindow();
             _screenshotPath = CaptureScreenshotByWindowHandle(wHandle);
+        }
+
+        /// <summary>
+        /// Centralized method to properly dispose of the system tray icon
+        /// </summary>
+        private void DisposeTrayIcon()
+        {
+            if (trayIcon != null)
+            {
+                trayIcon.Visible = false;
+                trayIcon.Dispose();
+                trayIcon = null;
+            }
         }
 
         private void CleanupOldScreenshots()
