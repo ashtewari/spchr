@@ -16,6 +16,7 @@ namespace SPCHR
         private void InitializeComponent()
         {
             toggleButton = new Button();
+            settingsButton = new Button();
             statusStrip = new StatusStrip();
             toolStripStatusLabel1 = new ToolStripStatusLabel();
             statusStrip.SuspendLayout();
@@ -30,12 +31,22 @@ namespace SPCHR
             toggleButton.Text = "Start Listening";
             toggleButton.Click += toggleButton_Click;
             // 
+            // settingsButton
+            // 
+            settingsButton.Location = new Point(230, 30);
+            settingsButton.Name = "settingsButton";
+            settingsButton.Size = new Size(75, 30);
+            settingsButton.TabIndex = 4;
+            settingsButton.Text = "Settings";
+            settingsButton.UseVisualStyleBackColor = true;
+            settingsButton.Click += settingsButton_Click;
+            // 
             // statusStrip
             // 
             statusStrip.Items.AddRange(new ToolStripItem[] { toolStripStatusLabel1 });
             statusStrip.Location = new Point(0, 119);
             statusStrip.Name = "statusStrip";
-            statusStrip.Size = new Size(284, 22);
+            statusStrip.Size = new Size(320, 22);
             statusStrip.TabIndex = 2;
             statusStrip.Text = "statusStrip1";
             // 
@@ -46,8 +57,9 @@ namespace SPCHR
             // 
             // MainForm
             // 
-            ClientSize = new Size(284, 141);
+            ClientSize = new Size(320, 141);
             Controls.Add(statusStrip);
+            Controls.Add(settingsButton);
             Controls.Add(toggleButton);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -60,6 +72,7 @@ namespace SPCHR
         }
 
         private Button toggleButton;
+        private Button settingsButton;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel toolStripStatusLabel1;
     }

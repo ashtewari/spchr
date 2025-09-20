@@ -1031,5 +1031,13 @@ namespace SPCHR
                 settingsForm.ShowDialog();
             }
         }
+
+        private void settingsButton_Click(object sender, EventArgs e)
+        {
+            using (var settingsForm = new SettingsForm(configuration, this))
+            {
+                settingsForm.ShowDialog();
+            }
+        }
     }
 }
