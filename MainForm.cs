@@ -33,7 +33,7 @@ namespace SPCHR
         private CancellationTokenSource? _transcriptionCancellation;
 
         private string _modelPath;
-        private GgmlType _modelType = GgmlType.SmallEn;
+        private GgmlType _modelType = GgmlType.TinyEn;
 
         // OpenAI and Semantic Kernel
         private IOpenAIVisionService _openAIService;
@@ -170,11 +170,11 @@ namespace SPCHR
             // Add OpenAI Checkbox (after InitializeComponent has been called)
             this.openAICheckBox = new CheckBox();
             this.openAICheckBox.AutoSize = true;
-            this.openAICheckBox.Location = new Point(12, 70);
+            this.openAICheckBox.Location = new Point(80,70);
             this.openAICheckBox.Name = "openAICheckBox";
             this.openAICheckBox.Size = new Size(180, 19);
             this.openAICheckBox.TabIndex = 3;
-            this.openAICheckBox.Text = "Use OpenAI to enhance text";
+            this.openAICheckBox.Text = "Enable Vision AI";
             this.openAICheckBox.UseVisualStyleBackColor = true;
             this.openAICheckBox.Checked = _useOpenAiVision;
             this.openAICheckBox.CheckedChanged += new EventHandler(this.openAICheckBox_CheckedChanged);
@@ -427,7 +427,7 @@ namespace SPCHR
                     await InitializeRealtimeTranscriptor();
                     _micAudioSource.StartRecording();
                     toggleButton.Text = "Stop Listening";
-                    statusLabel.Text = "Listening (Local)...";
+                    toolStripStatusLabel1.Text = "Listening (Local)...";
                     SetMicrophoneActive(true);
                     TakeScreenshotOfParentWindow();
                 }
@@ -443,7 +443,7 @@ namespace SPCHR
                         _micAudioSource = null;
                     }
                     toggleButton.Text = "Start Listening";
-                    statusLabel.Text = "Not listening";
+                    toolStripStatusLabel1.Text = "Not listening";
                     SetMicrophoneActive(false);
                 }
             }
@@ -453,7 +453,7 @@ namespace SPCHR
                 {
                     await recognizer.StartContinuousRecognitionAsync();
                     toggleButton.Text = "Stop Listening";
-                    statusLabel.Text = "Listening (Azure)...";
+                    toolStripStatusLabel1.Text = "Listening (Azure)...";
                     SetMicrophoneActive(true);
                     TakeScreenshotOfParentWindow();
                 }
@@ -461,7 +461,7 @@ namespace SPCHR
                 {
                     await recognizer.StopContinuousRecognitionAsync();
                     toggleButton.Text = "Start Listening";
-                    statusLabel.Text = "Not listening";
+                    toolStripStatusLabel1.Text = "Not listening";
                     SetMicrophoneActive(false);
                 }
             }
@@ -635,14 +635,14 @@ namespace SPCHR
             {
                 try
                 {
-                    statusLabel.Text = "Processing with OpenAI...";
+                    toolStripStatusLabel1.Text = "Processing with OpenAI...";
                     Application.DoEvents(); // Update UI
 
                     string enhancedText = await _openAIService.EnhanceText(text, _screenshotPath);
 
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
-                        statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
+                        toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
                         await PasteText(enhancedText);
                         return;
                     }
@@ -650,7 +650,7 @@ namespace SPCHR
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"Error calling OpenAI: {ex.Message}");
-                    statusLabel.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
+                    toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
                     // Fallback to original text if OpenAI fails
                 }
             }
