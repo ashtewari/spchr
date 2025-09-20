@@ -19,6 +19,7 @@ namespace SPCHR
             settingsButton = new Button();
             statusStrip = new StatusStrip();
             toolStripStatusLabel1 = new ToolStripStatusLabel();
+            ToolTip toolTip1 = new ToolTip();
             statusStrip.SuspendLayout();
             SuspendLayout();
             // 
@@ -29,15 +30,17 @@ namespace SPCHR
             toggleButton.Size = new Size(140, 30);
             toggleButton.TabIndex = 0;
             toggleButton.Text = "Start Listening";
+            toolTip1.SetToolTip(toggleButton, "Click to start/stop speech recognition");
             toggleButton.Click += toggleButton_Click;
             // 
             // settingsButton
             // 
             settingsButton.Location = new Point(230, 30);
             settingsButton.Name = "settingsButton";
-            settingsButton.Size = new Size(75, 30);
+            settingsButton.Size = new Size(33, 30);
             settingsButton.TabIndex = 4;
-            settingsButton.Text = "Settings";
+            settingsButton.Text = "...";
+            toolTip1.SetToolTip(settingsButton, "Open settings");
             settingsButton.UseVisualStyleBackColor = true;
             settingsButton.Click += settingsButton_Click;
             // 

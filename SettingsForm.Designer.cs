@@ -207,6 +207,7 @@ namespace SPCHR
             this.Name = "SettingsForm";
             this.StartPosition = FormStartPosition.CenterParent;
             this.Text = "SPCHR Settings";
+            this.TopMost = true;
             
             this.groupBoxOpenAI.ResumeLayout(false);
             this.groupBoxOpenAI.PerformLayout();
