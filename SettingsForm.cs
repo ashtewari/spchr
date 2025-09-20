@@ -142,11 +142,15 @@ namespace SPCHR
                 return;
             }
 
-            // Validate against common system hotkeys
+            // Validate against common system and application hotkeys
             if (IsSystemHotkey(modifiers, e.KeyCode))
             {
-                MessageBox.Show("This hotkey combination is reserved by the system. Please choose a different combination.",
-                    "System Hotkey Conflict", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                string conflictType = IsCommonApplicationHotkey(modifiers, e.KeyCode) ? 
+                    "This hotkey combination is commonly used by applications (like Ctrl+C for Copy). Using it would break that functionality system-wide." :
+                    "This hotkey combination is reserved by the system.";
+                    
+                MessageBox.Show($"{conflictType} Please choose a different combination like Ctrl+Alt+[Key].",
+                    "Hotkey Conflict", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -186,11 +190,48 @@ namespace SPCHR
                 }
             }
 
-            if (hasCtrl)
+            if (hasCtrl && !hasAlt && !hasShift)
             {
+                // Common Ctrl+Key shortcuts that should never be overridden
                 switch (key)
                 {
+                    case Keys.A:      // Select All
+                    case Keys.C:      // Copy
+                    case Keys.V:      // Paste
+                    case Keys.X:      // Cut
+                    case Keys.Z:      // Undo
+                    case Keys.Y:      // Redo
+                    case Keys.S:      // Save
+                    case Keys.O:      // Open
+                    case Keys.N:      // New
+                    case Keys.P:      // Print
+                    case Keys.F:      // Find
+                    case Keys.H:      // Replace
+                    case Keys.B:      // Bold
+                    case Keys.I:      // Italic
+                    case Keys.U:      // Underline
+                    case Keys.W:      // Close
+                    case Keys.T:      // New Tab
+                    case Keys.R:      // Refresh
+                    case Keys.L:      // Address bar
+                    case Keys.D:      // Bookmark/Desktop
+                    case Keys.E:      // Explorer
+                    case Keys.G:      // Go to
+                    case Keys.K:      // Insert link
+                    case Keys.Q:      // Quit
+                    case Keys.M:      // Minimize
+                    case Keys.J:      // Downloads
                     case Keys.Escape: // Ctrl+Esc
+                        return true;
+                }
+            }
+
+            if (hasCtrl)
+            {
+                // Additional Ctrl combinations that might be problematic
+                switch (key)
+                {
+                    case Keys.Escape: // Ctrl+Esc (system)
                         return true;
                 }
             }
@@ -201,6 +242,30 @@ namespace SPCHR
                 // Some F-keys are commonly used by system/applications
                 if (hasAlt && (key == Keys.F4)) return true; // Alt+F4 already covered above
                 if (hasCtrl && hasShift && key == Keys.Escape) return true;
+            }
+
+            return false;
+        }
+
+        private bool IsCommonApplicationHotkey(List<string> modifiers, Keys key)
+        {
+            bool hasCtrl = modifiers.Contains("Control");
+            bool hasAlt = modifiers.Contains("Alt");
+            bool hasShift = modifiers.Contains("Shift");
+
+            // Check if it's a common Ctrl+Key application shortcut
+            if (hasCtrl && !hasAlt && !hasShift)
+            {
+                switch (key)
+                {
+                    case Keys.A: case Keys.C: case Keys.V: case Keys.X: case Keys.Z:
+                    case Keys.Y: case Keys.S: case Keys.O: case Keys.N: case Keys.P:
+                    case Keys.F: case Keys.H: case Keys.B: case Keys.I: case Keys.U:
+                    case Keys.W: case Keys.T: case Keys.R: case Keys.L: case Keys.D:
+                    case Keys.E: case Keys.G: case Keys.K: case Keys.Q: case Keys.M:
+                    case Keys.J:
+                        return true;
+                }
             }
 
             return false;
