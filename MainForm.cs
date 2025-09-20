@@ -158,6 +158,10 @@ namespace SPCHR
             
             // Add context menu to tray icon
             var contextMenu = new ContextMenuStrip();
+            var settingsMenuItem = new ToolStripMenuItem("Settings");
+            settingsMenuItem.Click += SettingsMenuItem_Click;
+            contextMenu.Items.Add(settingsMenuItem);
+            
             var exitMenuItem = new ToolStripMenuItem("Exit");
             exitMenuItem.Click += (s, e) => Application.Exit();
             contextMenu.Items.Add(exitMenuItem);
@@ -1017,6 +1021,14 @@ namespace SPCHR
                     "OpenAI Configuration", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 openAICheckBox.Checked = false;
                 _useOpenAiVision = false;
+            }
+        }
+
+        private void SettingsMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var settingsForm = new SettingsForm(configuration, this))
+            {
+                settingsForm.ShowDialog();
             }
         }
     }
