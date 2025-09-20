@@ -30,11 +30,17 @@ namespace SPCHR
             this.txtAzureSubscriptionKey = new TextBox();
             this.lblAzureSubscriptionKey = new Label();
             
+            this.groupBoxHotkey = new GroupBox();
+            this.txtHotkey = new TextBox();
+            this.lblHotkey = new Label();
+            this.lblHotkeyInstructions = new Label();
+            
             this.btnSave = new Button();
             this.btnCancel = new Button();
             
             this.groupBoxOpenAI.SuspendLayout();
             this.groupBoxAzure.SuspendLayout();
+            this.groupBoxHotkey.SuspendLayout();
             this.SuspendLayout();
             
             // 
@@ -135,6 +141,50 @@ namespace SPCHR
             this.groupBoxAzure.Text = "Azure Speech Services Settings";
             
             // 
+            // groupBoxHotkey
+            // 
+            this.groupBoxHotkey.Controls.Add(this.lblHotkeyInstructions);
+            this.groupBoxHotkey.Controls.Add(this.txtHotkey);
+            this.groupBoxHotkey.Controls.Add(this.lblHotkey);
+            this.groupBoxHotkey.Location = new Point(12, 249);
+            this.groupBoxHotkey.Name = "groupBoxHotkey";
+            this.groupBoxHotkey.Size = new Size(460, 80);
+            this.groupBoxHotkey.TabIndex = 2;
+            this.groupBoxHotkey.TabStop = false;
+            this.groupBoxHotkey.Text = "Hotkey Settings";
+            
+            // 
+            // lblHotkey
+            // 
+            this.lblHotkey.AutoSize = true;
+            this.lblHotkey.Location = new Point(6, 25);
+            this.lblHotkey.Name = "lblHotkey";
+            this.lblHotkey.Size = new Size(108, 15);
+            this.lblHotkey.TabIndex = 0;
+            this.lblHotkey.Text = "Toggle Listening:";
+            
+            // 
+            // txtHotkey
+            // 
+            this.txtHotkey.Location = new Point(120, 22);
+            this.txtHotkey.Name = "txtHotkey";
+            this.txtHotkey.ReadOnly = true;
+            this.txtHotkey.Size = new Size(200, 23);
+            this.txtHotkey.TabIndex = 1;
+            this.txtHotkey.KeyDown += new KeyEventHandler(this.txtHotkey_KeyDown);
+            
+            // 
+            // lblHotkeyInstructions
+            // 
+            this.lblHotkeyInstructions.AutoSize = true;
+            this.lblHotkeyInstructions.ForeColor = Color.Gray;
+            this.lblHotkeyInstructions.Location = new Point(6, 50);
+            this.lblHotkeyInstructions.Name = "lblHotkeyInstructions";
+            this.lblHotkeyInstructions.Size = new Size(314, 15);
+            this.lblHotkeyInstructions.TabIndex = 2;
+            this.lblHotkeyInstructions.Text = "Click in the text box and press your desired key combination";
+            
+            // 
             // lblAzureSubscriptionKey
             // 
             this.lblAzureSubscriptionKey.AutoSize = true;
@@ -174,10 +224,10 @@ namespace SPCHR
             // 
             // btnSave
             // 
-            this.btnSave.Location = new Point(316, 260);
+            this.btnSave.Location = new Point(316, 340);
             this.btnSave.Name = "btnSave";
             this.btnSave.Size = new Size(75, 30);
-            this.btnSave.TabIndex = 2;
+            this.btnSave.TabIndex = 3;
             this.btnSave.Text = "Save";
             this.btnSave.UseVisualStyleBackColor = true;
             this.btnSave.Click += new EventHandler(this.btnSave_Click);
@@ -185,10 +235,10 @@ namespace SPCHR
             // 
             // btnCancel
             // 
-            this.btnCancel.Location = new Point(397, 260);
+            this.btnCancel.Location = new Point(397, 340);
             this.btnCancel.Name = "btnCancel";
             this.btnCancel.Size = new Size(75, 30);
-            this.btnCancel.TabIndex = 3;
+            this.btnCancel.TabIndex = 4;
             this.btnCancel.Text = "Cancel";
             this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new EventHandler(this.btnCancel_Click);
@@ -196,9 +246,10 @@ namespace SPCHR
             // 
             // SettingsForm
             // 
-            this.ClientSize = new Size(484, 302);
+            this.ClientSize = new Size(484, 382);
             this.Controls.Add(this.btnCancel);
             this.Controls.Add(this.btnSave);
+            this.Controls.Add(this.groupBoxHotkey);
             this.Controls.Add(this.groupBoxAzure);
             this.Controls.Add(this.groupBoxOpenAI);
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -213,6 +264,8 @@ namespace SPCHR
             this.groupBoxOpenAI.PerformLayout();
             this.groupBoxAzure.ResumeLayout(false);
             this.groupBoxAzure.PerformLayout();
+            this.groupBoxHotkey.ResumeLayout(false);
+            this.groupBoxHotkey.PerformLayout();
             this.ResumeLayout(false);
         }
 
@@ -230,6 +283,11 @@ namespace SPCHR
         private Label lblAzureRegion;
         private TextBox txtAzureSubscriptionKey;
         private Label lblAzureSubscriptionKey;
+        
+        private GroupBox groupBoxHotkey;
+        private TextBox txtHotkey;
+        private Label lblHotkey;
+        private Label lblHotkeyInstructions;
         
         private Button btnSave;
         private Button btnCancel;

@@ -102,8 +102,12 @@ namespace SPCHR
         // Modifiers for hotkeys
         private const uint MOD_ALT = 0x0001;
         private const uint MOD_CONTROL = 0x0002;
-        private const uint VK_L = 0x4C;  // L key
+        private const uint MOD_SHIFT = 0x0004;
         private const int HOTKEY_ID = 1;
+        
+        // Dynamic hotkey settings
+        private uint _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
+        private uint _hotkeyVirtualKey = 0x4C; // Default to L key
 
         private const int KEYEVENTF_KEYUP = 0x0002;
         private const byte VK_CONTROL = 0x11;
@@ -162,12 +166,19 @@ namespace SPCHR
             settingsMenuItem.Click += SettingsMenuItem_Click;
             contextMenu.Items.Add(settingsMenuItem);
             
+            contextMenu.Items.Add(new ToolStripSeparator());
+            
+            var hotkeyInfoMenuItem = new ToolStripMenuItem("Hotkey: Loading...");
+            hotkeyInfoMenuItem.Enabled = false;
+            contextMenu.Items.Add(hotkeyInfoMenuItem);
+            
             var exitMenuItem = new ToolStripMenuItem("Exit");
             exitMenuItem.Click += (s, e) => Application.Exit();
             contextMenu.Items.Add(exitMenuItem);
             trayIcon.ContextMenuStrip = contextMenu;
 
             InitializeMicrophoneIcon();
+            LoadHotkeySettings();
             RegisterGlobalHotKey();
             InitializeSpeechRecognizer();
 
@@ -387,20 +398,105 @@ namespace SPCHR
             return topLevelParent;
         }
 
+        private void LoadHotkeySettings()
+        {
+            try
+            {
+                // Load hotkey settings from configuration
+                string modifiersString = configuration["Hotkey:Modifiers"] ?? "Control,Alt";
+                string keyString = configuration["Hotkey:Key"] ?? "L";
+                
+                // Parse modifiers
+                _hotkeyModifiers = 0;
+                string[] modifiers = modifiersString.Split(',');
+                foreach (string modifier in modifiers)
+                {
+                    switch (modifier.Trim())
+                    {
+                        case "Control":
+                            _hotkeyModifiers |= MOD_CONTROL;
+                            break;
+                        case "Alt":
+                            _hotkeyModifiers |= MOD_ALT;
+                            break;
+                        case "Shift":
+                            _hotkeyModifiers |= MOD_SHIFT;
+                            break;
+                    }
+                }
+                
+                // Parse key - convert from Keys enum to virtual key code
+                if (Enum.TryParse<Keys>(keyString, out Keys key))
+                {
+                    _hotkeyVirtualKey = (uint)key;
+                }
+                else
+                {
+                    _hotkeyVirtualKey = 0x4C; // Default to L key
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error loading hotkey settings: {ex.Message}");
+                // Use defaults if loading fails
+                _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
+                _hotkeyVirtualKey = 0x4C;
+            }
+        }
+
         private void RegisterGlobalHotKey()
         {
             try
             {
-                if (!RegisterHotKey(this.Handle, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_L))
+                if (!RegisterHotKey(this.Handle, HOTKEY_ID, _hotkeyModifiers, _hotkeyVirtualKey))
                 {
-                    MessageBox.Show("Could not register hotkey Ctrl+Alt+L. It may be in use by another application.",
+                    string hotkeyDescription = GetHotkeyDescription();
+                    MessageBox.Show($"Could not register hotkey {hotkeyDescription}. It may be in use by another application.",
                         "Hotkey Registration Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    // Update tray icon context menu to show current hotkey
+                    UpdateTrayIconHotkeyDisplay();
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error registering hotkey: {ex.Message}");
             }
+        }
+        
+        private void UpdateTrayIconHotkeyDisplay()
+        {
+            if (trayIcon?.ContextMenuStrip != null)
+            {
+                // Find the hotkey info menu item (should be index 2: Settings, Separator, Hotkey)
+                if (trayIcon.ContextMenuStrip.Items.Count > 2)
+                {
+                    var hotkeyMenuItem = trayIcon.ContextMenuStrip.Items[2];
+                    hotkeyMenuItem.Text = $"Hotkey: {GetHotkeyDescription()}";
+                }
+            }
+        }
+        
+        private string GetHotkeyDescription()
+        {
+            List<string> parts = new List<string>();
+            if ((_hotkeyModifiers & MOD_CONTROL) != 0) parts.Add("Ctrl");
+            if ((_hotkeyModifiers & MOD_ALT) != 0) parts.Add("Alt");
+            if ((_hotkeyModifiers & MOD_SHIFT) != 0) parts.Add("Shift");
+            
+            if (Enum.IsDefined(typeof(Keys), (int)_hotkeyVirtualKey))
+            {
+                Keys key = (Keys)_hotkeyVirtualKey;
+                parts.Add(key.ToString());
+            }
+            else
+            {
+                parts.Add($"Key{_hotkeyVirtualKey:X}");
+            }
+            
+            return string.Join(" + ", parts);
         }
 
         protected override void WndProc(ref Message m)
@@ -1038,6 +1134,57 @@ namespace SPCHR
             {
                 settingsForm.ShowDialog();
             }
+        }
+        
+        public void ReloadHotkeySettings()
+        {
+            // Unregister the current hotkey
+            UnregisterHotKey(this.Handle, HOTKEY_ID);
+            
+            // Reload configuration (create new instance to pick up file changes)
+            var newConfiguration = new ConfigurationBuilder()
+                .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
+                .AddJsonFile("appsettings.json")
+                .AddJsonFile("appsettings.Development.json", optional: true)
+                .Build();
+                
+            // Update the configuration reference
+            // Note: This is a limitation - we can't easily update the readonly field
+            // So we'll load settings directly from the new config
+            string modifiersString = newConfiguration["Hotkey:Modifiers"] ?? "Control,Alt";
+            string keyString = newConfiguration["Hotkey:Key"] ?? "L";
+            
+            // Parse modifiers
+            _hotkeyModifiers = 0;
+            string[] modifiers = modifiersString.Split(',');
+            foreach (string modifier in modifiers)
+            {
+                switch (modifier.Trim())
+                {
+                    case "Control":
+                        _hotkeyModifiers |= MOD_CONTROL;
+                        break;
+                    case "Alt":
+                        _hotkeyModifiers |= MOD_ALT;
+                        break;
+                    case "Shift":
+                        _hotkeyModifiers |= MOD_SHIFT;
+                        break;
+                }
+            }
+            
+            // Parse key
+            if (Enum.TryParse<Keys>(keyString, out Keys key))
+            {
+                _hotkeyVirtualKey = (uint)key;
+            }
+            else
+            {
+                _hotkeyVirtualKey = 0x4C; // Default to L key
+            }
+            
+            // Register the new hotkey
+            RegisterGlobalHotKey();
         }
     }
 }
