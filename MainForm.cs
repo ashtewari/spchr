@@ -1078,20 +1078,23 @@ namespace SPCHR
         {
             WriteDebugLog($"=== PROCESSING SPEECH RESULT ===");
             WriteDebugLog($"Recognized text: '{text}' (Length: {text.Length})");
+            WriteDebugLog($"Vision AI enabled: {_useOpenAiVision}");
             
             TakeScreenshotOfParentWindow();
 
-            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && File.Exists(_screenshotPath))
+            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && !string.IsNullOrEmpty(_screenshotPath) && File.Exists(_screenshotPath))
             {
                 try
                 {
-                    toolStripStatusLabel1.Text = "Processing with OpenAI...";
+                    WriteDebugLog($"Processing with OpenAI Vision using screenshot: {_screenshotPath}");
+                    toolStripStatusLabel1.Text = "Processing with Vision AI...";
                     Application.DoEvents(); // Update UI
 
                     string enhancedText = await _openAIService.EnhanceText(text, _screenshotPath);
 
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
+                        WriteDebugLog($"OpenAI enhanced text: '{enhancedText}'");
                         toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
                         await InsertTextDirect(enhancedText);
                         return;
@@ -1100,19 +1103,33 @@ namespace SPCHR
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"Error calling OpenAI: {ex.Message}");
+                    WriteDebugLog($"OpenAI processing failed: {ex.Message}");
                     toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
                     // Fallback to original text if OpenAI fails
                 }
             }
+            else
+            {
+                WriteDebugLog($"Skipping OpenAI processing - Vision AI disabled or no screenshot available");
+            }
 
             // Fallback to original functionality
+            WriteDebugLog($"Using original text without OpenAI enhancement");
             await InsertTextDirect(text);
         }
 
         private void TakeScreenshotOfParentWindow()
         {
-            var wHandle = GetTopLevelParentWindow();
-            _screenshotPath = CaptureScreenshotByWindowHandle(wHandle);
+            // Only take screenshot if Vision AI is enabled
+            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey))
+            {
+                var wHandle = GetTopLevelParentWindow();
+                _screenshotPath = CaptureScreenshotByWindowHandle(wHandle);
+            }
+            else
+            {
+                _screenshotPath = string.Empty; // Clear any existing screenshot path
+            }
         }
 
         /// <summary>
