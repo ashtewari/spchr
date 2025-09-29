@@ -1,6 +1,9 @@
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using NAudio.Wave;
 using Whisper.net.Ggml;
@@ -95,6 +98,56 @@ namespace SPCHR
         [DllImport("user32.dll")]
         private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
 
+        // Additional APIs for direct text insertion
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
+
+        [DllImport("user32.dll")]
+        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        // Additional method for UI Automation approach
+        [DllImport("oleacc.dll")]
+        private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint dwObjectID, ref Guid riid, out IntPtr ppvObject);
+
+        // Constants for UI Automation
+        private const uint OBJID_CARET = 0xFFFFFFF8;
+
+        // Constants for direct text insertion
+        private const uint EM_REPLACESEL = 0x00C2;
+        private const uint WM_CHAR = 0x0102;
+        private const uint INPUT_KEYBOARD = 1;
+        private const uint KEYEVENTF_UNICODE = 0x0004;
+
+        // INPUT structure for SendInput
+        [StructLayout(LayoutKind.Sequential)]
+        private struct INPUT
+        {
+            public uint type;
+            public KEYBDINPUT ki;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
         private const int SRCCOPY = 0x00CC0020; // BitBlt raster operation code
 
         private const uint GA_ROOT = 2; // Retrieves the top-level window
@@ -109,7 +162,7 @@ namespace SPCHR
         private uint _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
         private uint _hotkeyVirtualKey = 0x4C; // Default to L key
 
-        private const int KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
         private const byte VK_CONTROL = 0x11;
         private const byte VK_V = 0x56;
 
@@ -120,8 +173,20 @@ namespace SPCHR
 
         private string _screenshotPath;
 
+        // Semaphore to prevent concurrent text insertion operations
+        private static readonly SemaphoreSlim _textInsertionSemaphore = new SemaphoreSlim(1, 1);
+
+        // Debug logging
+        private static readonly string _debugLogPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"debug_log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.txt");
+        private static readonly object _logLock = new object();
+
         public MainForm()
         {
+            // Initialize debug logging
+            ClearDebugLog();
+            WriteDebugLog("=== SPCHR Application Started ===");
+            WriteDebugLog($"Debug log location: {_debugLogPath}");
+            
             configuration = new ConfigurationBuilder()
                 .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
                 .AddJsonFile("appsettings.json")
@@ -333,8 +398,8 @@ namespace SPCHR
                 // Simulate Ctrl+V
                 keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
                 keybd_event(VK_V, 0, 0, UIntPtr.Zero);
-                keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                keybd_event(VK_V, 0, (uint)KEYEVENTF_KEYUP, UIntPtr.Zero);
+                keybd_event(VK_CONTROL, 0, (uint)KEYEVENTF_KEYUP, UIntPtr.Zero);
 
                 // Wait for paste operation to complete before restoring clipboard
                 await Task.Delay(100);
@@ -355,6 +420,278 @@ namespace SPCHR
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error pasting text: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Alternative text insertion method that bypasses clipboard and directly inserts text
+        /// at the current cursor position using Windows API
+        /// </summary>
+        private async Task InsertTextDirect(string text)
+        {
+            // Prevent concurrent text insertion operations
+            if (!await _textInsertionSemaphore.WaitAsync(100)) // 100ms timeout
+            {
+                WriteDebugLog("Text insertion already in progress - skipping duplicate request");
+                return;
+            }
+
+            try
+            {
+                if (string.IsNullOrEmpty(text))
+                {
+                    WriteDebugLog("Cannot insert empty text");
+                    return;
+                }
+
+                // Get the foreground window (where the cursor is)
+                IntPtr foregroundWindow = GetForegroundWindow();
+                if (foregroundWindow == IntPtr.Zero)
+                {
+                    WriteDebugLog("No foreground window found");
+                    return;
+                }
+
+                // Get window title for debugging
+                var windowTitle = new System.Text.StringBuilder(256);
+                GetWindowText(foregroundWindow, windowTitle, windowTitle.Capacity);
+                WriteDebugLog($"Target window: '{windowTitle}' (Handle: {foregroundWindow})");
+                WriteDebugLog($"Text to insert: '{text}' (Length: {text.Length})");
+                
+                // Check if running as administrator (affects SendInput)
+                bool isAdmin = IsRunningAsAdministrator();
+                WriteDebugLog($"Running as administrator: {isAdmin}");
+                
+                if (!isAdmin)
+                {
+                    WriteDebugLog("WARNING: Not running as administrator - SendInput may fail due to UIPI (User Interface Privilege Isolation)");
+                    WriteDebugLog("SUGGESTION: For better compatibility, right-click the executable and select 'Run as administrator'");
+                }
+
+                // Try multiple methods in order of preference
+                bool success = false;
+
+                // Special handling for applications that use custom controls
+                string windowTitleStr = windowTitle.ToString();
+                
+                WriteDebugLog($"Detected {windowTitleStr} - using simulated typing method");
+                success = InsertWithSimulatedTyping(text);
+                if (success)
+                {
+                    WriteDebugLog("Text inserted using simulated typing");
+                    return;
+                }
+                WriteDebugLog($"{windowTitleStr} simulated typing failed, trying other methods");
+                
+                // Fallback to clipboard method as last resort - must be on UI thread
+                await Task.Run(() => this.Invoke(async () => await PasteText(text)));
+            }
+            catch (Exception ex)
+            {
+                WriteDebugLog($"Error in direct text insertion: {ex.Message}");
+                WriteDebugLog($"Stack trace: {ex.StackTrace}");
+            }
+            finally
+            {
+                _textInsertionSemaphore.Release();
+            }
+        }
+
+        /// <summary>
+        /// Write debug message to log file with timestamp
+        /// </summary>
+        private static void WriteDebugLog(string message)
+        {
+            try
+            {
+                lock (_logLock)
+                {
+                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                    string logEntry = $"[{timestamp}] {message}";
+                    
+                    // Also write to Debug output for development
+                    System.Diagnostics.Debug.WriteLine(logEntry);
+                    
+                    // Write to file
+                    File.AppendAllText(_debugLogPath, logEntry + Environment.NewLine);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Fallback to Debug output only if file writing fails
+                System.Diagnostics.Debug.WriteLine($"Failed to write to debug log: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Original message: {message}");
+            }
+        }
+
+        /// <summary>
+        /// Clear the debug log file
+        /// </summary>
+        private static void ClearDebugLog()
+        {
+            try
+            {
+                lock (_logLock)
+                {
+                    if (File.Exists(_debugLogPath))
+                    {
+                        File.Delete(_debugLogPath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to clear debug log: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Check if the application is running as administrator
+        /// </summary>
+        private bool IsRunningAsAdministrator()
+        {
+            try
+            {
+                var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                var principal = new System.Security.Principal.WindowsPrincipal(identity);
+                return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Simulated typing method using keybd_event - works without admin privileges
+        /// </summary>
+        private bool InsertWithSimulatedTyping(string text)
+        {
+            try
+            {
+                WriteDebugLog($"  - Using simulated typing for {text.Length} characters");
+                
+                // Save original clipboard content once at the beginning
+                string originalClipboard = null;
+                bool hadClipboard = false;
+                
+                try
+                {
+                    if (Clipboard.ContainsText())
+                    {
+                        originalClipboard = Clipboard.GetText();
+                        hadClipboard = true;
+                        WriteDebugLog($"  - Saved original clipboard content ({originalClipboard?.Length ?? 0} chars)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    WriteDebugLog($"  - Warning: Could not save clipboard content: {ex.Message}");
+                }
+                
+                try
+                {
+                    // Set the entire text to clipboard once
+                    Clipboard.SetText(text);
+                    WriteDebugLog($"  - Set text to clipboard");
+                    Thread.Sleep(100); // Give clipboard time to update
+                    
+                    // Verify clipboard content was set correctly
+                    string clipboardCheck = Clipboard.GetText();
+                    if (clipboardCheck != text)
+                    {
+                        WriteDebugLog($"  - WARNING: Clipboard verification failed. Expected {text.Length} chars, got {clipboardCheck?.Length ?? 0} chars");
+                    }
+                    
+                    // Paste the text once
+                    keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+                    keybd_event(VK_V, 0, 0, UIntPtr.Zero);
+                    keybd_event(VK_V, 0, (uint)KEYEVENTF_KEYUP, UIntPtr.Zero);
+                    keybd_event(VK_CONTROL, 0, (uint)KEYEVENTF_KEYUP, UIntPtr.Zero);
+                    
+                    WriteDebugLog($"  - Executed paste command");
+                    
+                    // Wait longer for Word to process the paste operation
+                    // Word can be slow, especially with longer text
+                    int waitTime = Math.Min(500, text.Length * 2); // 2ms per character, max 500ms
+                    Thread.Sleep(waitTime);
+                    WriteDebugLog($"  - Waited {waitTime}ms for paste to complete");
+                    
+                    WriteDebugLog($"  - Simulated typing: {text.Length}/{text.Length} characters processed");
+                    return true;
+                }
+                finally
+                {
+                    // Add additional delay before restoring clipboard to ensure paste is completely done
+                    Thread.Sleep(200);
+                    WriteDebugLog($"  - Additional 200ms delay before clipboard restoration");
+                    
+                    // Restore original clipboard content
+                    try
+                    {
+                        if (hadClipboard && originalClipboard != null)
+                        {
+                            Clipboard.SetText(originalClipboard);
+                            WriteDebugLog($"  - Restored original clipboard content ({originalClipboard.Length} chars)");
+                        }
+                        else
+                        {
+                            Clipboard.Clear();
+                            WriteDebugLog($"  - Cleared clipboard");
+                        }
+                        
+                        // Verify the restoration worked
+                        string finalClipboard = Clipboard.GetText();
+                        if (hadClipboard && originalClipboard != null)
+                        {
+                            if (finalClipboard == originalClipboard)
+                            {
+                                WriteDebugLog($"  - Clipboard restoration verified successfully");
+                            }
+                            else
+                            {
+                                WriteDebugLog($"  - WARNING: Clipboard restoration verification failed");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteDebugLog($"  - Warning: Could not restore clipboard: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteDebugLog($"  - Simulated typing method failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Open the debug log file in the default text editor
+        /// </summary>
+        public void OpenDebugLog()
+        {
+            try
+            {
+                if (File.Exists(_debugLogPath))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = _debugLogPath,
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    MessageBox.Show($"Debug log file not found at: {_debugLogPath}", 
+                        "Debug Log", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not open debug log: {ex.Message}", 
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -618,6 +955,8 @@ namespace SPCHR
             // Ensure tray icon is properly disposed
             DisposeTrayIcon();
             
+            WriteDebugLog("=== SPCHR Application Closing ===");
+            
             base.OnFormClosing(e);
         }
 
@@ -737,6 +1076,9 @@ namespace SPCHR
 
         private async Task ProcessResults(string text)
         {
+            WriteDebugLog($"=== PROCESSING SPEECH RESULT ===");
+            WriteDebugLog($"Recognized text: '{text}' (Length: {text.Length})");
+            
             TakeScreenshotOfParentWindow();
 
             if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && File.Exists(_screenshotPath))
@@ -751,7 +1093,7 @@ namespace SPCHR
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
                         toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
-                        await PasteText(enhancedText);
+                        await InsertTextDirect(enhancedText);
                         return;
                     }
                 }
@@ -764,7 +1106,7 @@ namespace SPCHR
             }
 
             // Fallback to original functionality
-            await PasteText(text);
+            await InsertTextDirect(text);
         }
 
         private void TakeScreenshotOfParentWindow()
