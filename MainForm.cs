@@ -291,18 +291,18 @@ namespace SPCHR
                 if (WaveInEvent.DeviceCount > 0)
                 {
                     var capabilities = WaveInEvent.GetCapabilities(0);
-                    System.Diagnostics.Debug.WriteLine($"{context} using microphone: {capabilities.ProductName}");
+                    WriteDebugLog($"{context} using microphone: {capabilities.ProductName}");
                     Console.WriteLine($"{context} using microphone: {capabilities.ProductName}");
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"No microphone devices found for {context}");
+                    WriteDebugLog($"No microphone devices found for {context}");
                     Console.WriteLine($"No microphone devices found for {context}");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Failed to get microphone name for {context}: {ex.Message}");
+                WriteDebugLog($"Failed to get microphone name for {context}: {ex.Message}");
             }
         }
 
@@ -366,7 +366,7 @@ namespace SPCHR
             {
                 if (string.IsNullOrEmpty(text))
                 {
-                    System.Diagnostics.Debug.WriteLine("Cannot paste empty text");
+                    WriteDebugLog("Cannot paste empty text");
                     return;
                 }
 
@@ -384,7 +384,7 @@ namespace SPCHR
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Warning: Could not read current clipboard content: {ex.Message}");
+                    WriteDebugLog($"Warning: Could not read current clipboard content: {ex.Message}");
                 }
 
                 GetTopLevelParentWindow(); // This now gets and sets focus to the appropriate window
@@ -413,13 +413,13 @@ namespace SPCHR
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not restore original clipboard content: {ex.Message}");
+                        WriteDebugLog($"Warning: Could not restore original clipboard content: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error pasting text: {ex.Message}");
+                WriteDebugLog($"Error pasting text: {ex.Message}");
             }
         }
 
@@ -704,17 +704,15 @@ namespace SPCHR
             var windowTitle = new System.Text.StringBuilder(256);
             if (GetWindowText(foregroundWindow, windowTitle, windowTitle.Capacity) > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"Foreground window title: {windowTitle}");
+                WriteDebugLog($"Foreground window title: {windowTitle}");
             }
             
             if (foregroundWindow != IntPtr.Zero)
             {
-                System.Diagnostics.Debug.WriteLine($"Foreground window handle: {foregroundWindow}");
+                WriteDebugLog($"Foreground window handle: {foregroundWindow}");
                 // Get the process ID of the foreground window
                 GetWindowThreadProcessId(foregroundWindow, out int processId);
-                System.Diagnostics.Debug.WriteLine($"Foreground window process ID: {processId}");
-
-                //SetForegroundWindow(foregroundWindow);
+                WriteDebugLog($"Foreground window process ID: {processId}");
                 
                 return foregroundWindow;
             }
@@ -723,18 +721,18 @@ namespace SPCHR
             IntPtr focusedHandle = GetFocus();
             if (focusedHandle == IntPtr.Zero)
             {
-                System.Diagnostics.Debug.WriteLine("No control is currently focused.");
+                WriteDebugLog("No control is currently focused.");
                 return focusedHandle;
             }
 
             IntPtr topLevelParent = GetAncestor(focusedHandle, GA_ROOT);  
             if (topLevelParent != IntPtr.Zero)
             {
-                System.Diagnostics.Debug.WriteLine($"Top-level parent window handle: {topLevelParent}");
+                WriteDebugLog($"Top-level parent window handle: {topLevelParent}");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("Failed to retrieve top-level parent window.");
+                WriteDebugLog("Failed to retrieve top-level parent window.");
             }
 
             return topLevelParent;
@@ -779,7 +777,7 @@ namespace SPCHR
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error loading hotkey settings: {ex.Message}");
+                WriteDebugLog($"Error loading hotkey settings: {ex.Message}");
                 // Use defaults if loading fails
                 _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
                 _hotkeyVirtualKey = 0x4C;
@@ -1102,7 +1100,6 @@ namespace SPCHR
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error calling OpenAI: {ex.Message}");
                     WriteDebugLog($"OpenAI processing failed: {ex.Message}");
                     toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
                     // Fallback to original text if OpenAI fails
@@ -1173,14 +1170,14 @@ namespace SPCHR
                         }
                         catch (Exception ex)
                         {
-                            System.Diagnostics.Debug.WriteLine($"Failed to delete old screenshot: {ex.Message}");
+                            WriteDebugLog($"Failed to delete old screenshot: {ex.Message}");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error cleaning up screenshots: {ex.Message}");
+                WriteDebugLog($"Error cleaning up screenshots: {ex.Message}");
             }
         }
 
@@ -1190,7 +1187,7 @@ namespace SPCHR
             {
                 if (!GetWindowRect(topLevelParent, out RECT rect))
                 {
-                    System.Diagnostics.Debug.WriteLine("Failed to get window dimensions.");
+                    WriteDebugLog("Failed to get window dimensions.");
                     return string.Empty;
                 }
 
@@ -1199,7 +1196,7 @@ namespace SPCHR
 
                 if (width <= 0 || height <= 0)
                 {
-                    System.Diagnostics.Debug.WriteLine("Invalid window size.");
+                    WriteDebugLog("Invalid window size.");
                     return string.Empty;
                 }
 
@@ -1217,20 +1214,20 @@ namespace SPCHR
                         if (PrintWindow(topLevelParent, hdcBitmap, PW_RENDERFULLCONTENT))
                         {
                             captureSuccessful = true;
-                            System.Diagnostics.Debug.WriteLine("Screenshot captured using PrintWindow with PW_RENDERFULLCONTENT");
+                            WriteDebugLog("Screenshot captured using PrintWindow with PW_RENDERFULLCONTENT");
                         }
                         // Fallback to standard PrintWindow
                         else if (PrintWindow(topLevelParent, hdcBitmap, 0))
                         {
                             captureSuccessful = true;
-                            System.Diagnostics.Debug.WriteLine("Screenshot captured using PrintWindow (standard)");
+                            WriteDebugLog("Screenshot captured using PrintWindow (standard)");
                         }
                         gfx.ReleaseHdc(hdcBitmap);
                     }
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"PrintWindow method failed: {ex.Message}");
+                    WriteDebugLog($"PrintWindow method failed: {ex.Message}");
                     screenshot?.Dispose();
                     screenshot = null;
                 }
@@ -1245,12 +1242,12 @@ namespace SPCHR
                         {
                             gfx.CopyFromScreen(rect.left, rect.top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
                             captureSuccessful = true;
-                            System.Diagnostics.Debug.WriteLine("Screenshot captured using Graphics.CopyFromScreen");
+                            WriteDebugLog("Screenshot captured using Graphics.CopyFromScreen");
                         }
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"CopyFromScreen method failed: {ex.Message}");
+                        WriteDebugLog($"CopyFromScreen method failed: {ex.Message}");
                         screenshot?.Dispose();
                         screenshot = null;
                     }
@@ -1269,7 +1266,7 @@ namespace SPCHR
                             if (BitBlt(hdcBitmap, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY))
                             {
                                 captureSuccessful = true;
-                                System.Diagnostics.Debug.WriteLine("Screenshot captured using BitBlt (fallback)");
+                                WriteDebugLog("Screenshot captured using BitBlt (fallback)");
                             }
                             ReleaseDC(topLevelParent, hdcWindow);
                             gfx.ReleaseHdc(hdcBitmap);
@@ -1277,7 +1274,7 @@ namespace SPCHR
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"BitBlt method failed: {ex.Message}");
+                        WriteDebugLog($"BitBlt method failed: {ex.Message}");
                         screenshot?.Dispose();
                         return string.Empty;
                     }
@@ -1285,14 +1282,14 @@ namespace SPCHR
 
                 if (!captureSuccessful || screenshot == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("All screenshot capture methods failed.");
+                    WriteDebugLog("All screenshot capture methods failed.");
                     return string.Empty;
                 }
 
                 // Check if the screenshot is completely black (common issue with some methods)
                 if (IsImageBlank(screenshot))
                 {
-                    System.Diagnostics.Debug.WriteLine("Screenshot appears to be blank, attempting alternative capture...");
+                    WriteDebugLog("Screenshot appears to be blank, attempting alternative capture...");
                     screenshot.Dispose();
                     
                     // Try CopyFromScreen as last resort for blank images
@@ -1306,7 +1303,7 @@ namespace SPCHR
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Final fallback method failed: {ex.Message}");
+                        WriteDebugLog($"Final fallback method failed: {ex.Message}");
                         screenshot?.Dispose();
                         return string.Empty;
                     }
@@ -1328,7 +1325,7 @@ namespace SPCHR
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error capturing screenshot: {ex.Message}");
+                WriteDebugLog($"Error capturing screenshot: {ex.Message}");
                 return string.Empty;
             }
         }
