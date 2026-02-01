@@ -44,6 +44,14 @@ namespace SPCHR
 
         private bool useWhisper = false;
         
+        // Auto-insert setting
+        private bool _autoInsertEnabled = true;
+        private StringBuilder _accumulatedText = new StringBuilder();
+        
+        // Public properties to expose current state to SettingsForm
+        public bool AutoInsertEnabled => _autoInsertEnabled;
+        public bool VisionAIEnabled => _useOpenAiVision;
+        
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -157,10 +165,20 @@ namespace SPCHR
         private const uint MOD_CONTROL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
         private const int HOTKEY_ID = 1;
+        private const int HOTKEY_ID_AUTO_INSERT = 2;
+        private const int HOTKEY_ID_VISION_AI = 3;
         
         // Dynamic hotkey settings
         private uint _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
         private uint _hotkeyVirtualKey = 0x4C; // Default to L key
+        
+        // Auto-insert toggle hotkey settings
+        private uint _hotkeyAutoInsertModifiers = MOD_CONTROL | MOD_ALT;
+        private uint _hotkeyAutoInsertVirtualKey = 0x49; // Default to I key
+        
+        // Vision AI toggle hotkey settings
+        private uint _hotkeyVisionAIModifiers = MOD_CONTROL | MOD_ALT;
+        private uint _hotkeyVisionAIVirtualKey = 0x56; // Default to V key
 
         private const uint KEYEVENTF_KEYUP = 0x0002;
         private const byte VK_CONTROL = 0x11;
@@ -203,6 +221,13 @@ namespace SPCHR
             if (string.IsNullOrEmpty(_openAIService.ApiKey))
             {
                 _useOpenAiVision = false; // Disable OpenAI if no API key
+            }
+
+            // Load AutoInsert setting
+            _autoInsertEnabled = true; // default value
+            if (bool.TryParse(configuration["AutoInsertEnabled"], out bool autoInsertValue))
+            {
+                _autoInsertEnabled = autoInsertValue;
             }
 
             InitializeComponent(); // This needs to happen before we access any controls
@@ -809,6 +834,68 @@ namespace SPCHR
                 {
                     _hotkeyVirtualKey = 0x4C; // Default to L key
                 }
+                
+                // Load Auto-Insert hotkey settings
+                string autoInsertModifiersString = configuration["HotkeyAutoInsert:Modifiers"] ?? "Control,Alt";
+                string autoInsertKeyString = configuration["HotkeyAutoInsert:Key"] ?? "I";
+                
+                _hotkeyAutoInsertModifiers = 0;
+                string[] autoInsertModifiers = autoInsertModifiersString.Split(',');
+                foreach (string modifier in autoInsertModifiers)
+                {
+                    switch (modifier.Trim())
+                    {
+                        case "Control":
+                            _hotkeyAutoInsertModifiers |= MOD_CONTROL;
+                            break;
+                        case "Alt":
+                            _hotkeyAutoInsertModifiers |= MOD_ALT;
+                            break;
+                        case "Shift":
+                            _hotkeyAutoInsertModifiers |= MOD_SHIFT;
+                            break;
+                    }
+                }
+                
+                if (Enum.TryParse<Keys>(autoInsertKeyString, out Keys autoInsertKey))
+                {
+                    _hotkeyAutoInsertVirtualKey = (uint)autoInsertKey;
+                }
+                else
+                {
+                    _hotkeyAutoInsertVirtualKey = 0x49; // Default to I key
+                }
+                
+                // Load Vision AI hotkey settings
+                string visionAIModifiersString = configuration["HotkeyVisionAI:Modifiers"] ?? "Control,Alt";
+                string visionAIKeyString = configuration["HotkeyVisionAI:Key"] ?? "V";
+                
+                _hotkeyVisionAIModifiers = 0;
+                string[] visionAIModifiers = visionAIModifiersString.Split(',');
+                foreach (string modifier in visionAIModifiers)
+                {
+                    switch (modifier.Trim())
+                    {
+                        case "Control":
+                            _hotkeyVisionAIModifiers |= MOD_CONTROL;
+                            break;
+                        case "Alt":
+                            _hotkeyVisionAIModifiers |= MOD_ALT;
+                            break;
+                        case "Shift":
+                            _hotkeyVisionAIModifiers |= MOD_SHIFT;
+                            break;
+                    }
+                }
+                
+                if (Enum.TryParse<Keys>(visionAIKeyString, out Keys visionAIKey))
+                {
+                    _hotkeyVisionAIVirtualKey = (uint)visionAIKey;
+                }
+                else
+                {
+                    _hotkeyVisionAIVirtualKey = 0x56; // Default to V key
+                }
             }
             catch (Exception ex)
             {
@@ -816,6 +903,10 @@ namespace SPCHR
                 // Use defaults if loading fails
                 _hotkeyModifiers = MOD_CONTROL | MOD_ALT;
                 _hotkeyVirtualKey = 0x4C;
+                _hotkeyAutoInsertModifiers = MOD_CONTROL | MOD_ALT;
+                _hotkeyAutoInsertVirtualKey = 0x49;
+                _hotkeyVisionAIModifiers = MOD_CONTROL | MOD_ALT;
+                _hotkeyVisionAIVirtualKey = 0x56;
             }
         }
 
@@ -823,21 +914,44 @@ namespace SPCHR
         {
             try
             {
+                bool allSuccessful = true;
+                
+                // Register main listening toggle hotkey
                 if (!RegisterHotKey(this.Handle, HOTKEY_ID, _hotkeyModifiers, _hotkeyVirtualKey))
                 {
-                    string hotkeyDescription = GetHotkeyDescription();
-                    MessageBox.Show($"Could not register hotkey {hotkeyDescription}. It may be in use by another application.",
+                    string hotkeyDescription = GetHotkeyDescription(_hotkeyModifiers, _hotkeyVirtualKey);
+                    MessageBox.Show($"Could not register hotkey {hotkeyDescription} for Toggle Listening. It may be in use by another application.",
                         "Hotkey Registration Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    allSuccessful = false;
                 }
-                else
+                
+                // Register Auto-Insert toggle hotkey
+                if (!RegisterHotKey(this.Handle, HOTKEY_ID_AUTO_INSERT, _hotkeyAutoInsertModifiers, _hotkeyAutoInsertVirtualKey))
                 {
-                    // Update tray icon context menu to show current hotkey
+                    string hotkeyDescription = GetHotkeyDescription(_hotkeyAutoInsertModifiers, _hotkeyAutoInsertVirtualKey);
+                    MessageBox.Show($"Could not register hotkey {hotkeyDescription} for Toggle Auto-Insert. It may be in use by another application.",
+                        "Hotkey Registration Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    allSuccessful = false;
+                }
+                
+                // Register Vision AI toggle hotkey
+                if (!RegisterHotKey(this.Handle, HOTKEY_ID_VISION_AI, _hotkeyVisionAIModifiers, _hotkeyVisionAIVirtualKey))
+                {
+                    string hotkeyDescription = GetHotkeyDescription(_hotkeyVisionAIModifiers, _hotkeyVisionAIVirtualKey);
+                    MessageBox.Show($"Could not register hotkey {hotkeyDescription} for Toggle Vision AI. It may be in use by another application.",
+                        "Hotkey Registration Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    allSuccessful = false;
+                }
+                
+                if (allSuccessful)
+                {
+                    // Update tray icon context menu to show current hotkeys
                     UpdateTrayIconHotkeyDisplay();
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error registering hotkey: {ex.Message}");
+                MessageBox.Show($"Error registering hotkeys: {ex.Message}");
             }
         }
         
@@ -849,26 +963,34 @@ namespace SPCHR
                 if (trayIcon.ContextMenuStrip.Items.Count > 2)
                 {
                     var hotkeyMenuItem = trayIcon.ContextMenuStrip.Items[2];
-                    hotkeyMenuItem.Text = $"Hotkey: {GetHotkeyDescription()}";
+                    string listeningHotkey = GetHotkeyDescription(_hotkeyModifiers, _hotkeyVirtualKey);
+                    string autoInsertHotkey = GetHotkeyDescription(_hotkeyAutoInsertModifiers, _hotkeyAutoInsertVirtualKey);
+                    string visionAIHotkey = GetHotkeyDescription(_hotkeyVisionAIModifiers, _hotkeyVisionAIVirtualKey);
+                    hotkeyMenuItem.Text = $"Listening: {listeningHotkey} | Auto-Insert: {autoInsertHotkey} | Vision: {visionAIHotkey}";
                 }
             }
         }
         
         private string GetHotkeyDescription()
         {
+            return GetHotkeyDescription(_hotkeyModifiers, _hotkeyVirtualKey);
+        }
+        
+        private string GetHotkeyDescription(uint modifiers, uint virtualKey)
+        {
             List<string> parts = new List<string>();
-            if ((_hotkeyModifiers & MOD_CONTROL) != 0) parts.Add("Ctrl");
-            if ((_hotkeyModifiers & MOD_ALT) != 0) parts.Add("Alt");
-            if ((_hotkeyModifiers & MOD_SHIFT) != 0) parts.Add("Shift");
+            if ((modifiers & MOD_CONTROL) != 0) parts.Add("Ctrl");
+            if ((modifiers & MOD_ALT) != 0) parts.Add("Alt");
+            if ((modifiers & MOD_SHIFT) != 0) parts.Add("Shift");
             
-            if (Enum.IsDefined(typeof(Keys), (int)_hotkeyVirtualKey))
+            if (Enum.IsDefined(typeof(Keys), (int)virtualKey))
             {
-                Keys key = (Keys)_hotkeyVirtualKey;
+                Keys key = (Keys)virtualKey;
                 parts.Add(key.ToString());
             }
             else
             {
-                parts.Add($"Key{_hotkeyVirtualKey:X}");
+                parts.Add($"Key{virtualKey:X}");
             }
             
             return string.Join(" + ", parts);
@@ -878,9 +1000,21 @@ namespace SPCHR
         {
             // Hotkey handling
             const int WM_HOTKEY = 0x0312;
-            if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
+            if (m.Msg == WM_HOTKEY)
             {
-                ToggleListening();
+                int hotkeyId = m.WParam.ToInt32();
+                switch (hotkeyId)
+                {
+                    case HOTKEY_ID:
+                        ToggleListening();
+                        break;
+                    case HOTKEY_ID_AUTO_INSERT:
+                        ToggleAutoInsert();
+                        break;
+                    case HOTKEY_ID_VISION_AI:
+                        ToggleVisionAI();
+                        break;
+                }
             }
 
             base.WndProc(ref m);
@@ -903,6 +1037,10 @@ namespace SPCHR
                     _screenshotTakenForCurrentSegment = false;
                     _currentSegmentScreenshotPath = string.Empty;
                     
+                    // Reset accumulated text when starting listening
+                    _accumulatedText.Clear();
+                    WriteDebugLog("Accumulated text cleared - starting new listening session");
+                    
                     await InitializeRealtimeTranscriptor();
                     _micAudioSource.StartRecording();
                     toggleButton.Text = "Stop Listening";
@@ -924,6 +1062,12 @@ namespace SPCHR
                     toggleButton.Text = "Start Listening";
                     toolStripStatusLabel1.Text = "Not listening";
                     SetMicrophoneActive(false);
+                    
+                    // Log accumulated text when stopping (if in accumulation mode)
+                    if (!_autoInsertEnabled && _accumulatedText.Length > 0)
+                    {
+                        WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
+                    }
                 }
             }
             else if (recognizer != null)
@@ -933,6 +1077,10 @@ namespace SPCHR
                     // Reset segment tracking
                     _screenshotTakenForCurrentSegment = false;
                     _currentSegmentScreenshotPath = string.Empty;
+                    
+                    // Reset accumulated text when starting listening
+                    _accumulatedText.Clear();
+                    WriteDebugLog("Accumulated text cleared - starting new listening session");
                     
                     await recognizer.StartContinuousRecognitionAsync();
                     toggleButton.Text = "Stop Listening";
@@ -946,10 +1094,86 @@ namespace SPCHR
                     toggleButton.Text = "Start Listening";
                     toolStripStatusLabel1.Text = "Not listening";
                     SetMicrophoneActive(false);
+                    
+                    // Log accumulated text when stopping (if in accumulation mode)
+                    if (!_autoInsertEnabled && _accumulatedText.Length > 0)
+                    {
+                        WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
+                    }
                 }
             }
 
             isListening = !isListening;
+        }
+
+        private void ToggleAutoInsert()
+        {
+            _autoInsertEnabled = !_autoInsertEnabled;
+            string status = _autoInsertEnabled ? "Enabled" : "Disabled";
+            WriteDebugLog($"Auto-Insert toggled: {status}");
+            toolStripStatusLabel1.Text = $"Auto-Insert {status}";
+            
+            // Reset the status text after a brief delay
+            Task.Delay(2000).ContinueWith(_ =>
+            {
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        if (isListening)
+                        {
+                            toolStripStatusLabel1.Text = useWhisper ? "Listening (Local)..." : "Listening (Azure)...";
+                        }
+                        else
+                        {
+                            toolStripStatusLabel1.Text = "Not listening";
+                        }
+                    }));
+                }
+            });
+        }
+
+        private void ToggleVisionAI()
+        {
+            _useOpenAiVision = !_useOpenAiVision;
+            
+            // Check if API key is available
+            if (_useOpenAiVision && string.IsNullOrEmpty(_openAIService.ApiKey))
+            {
+                MessageBox.Show("Please provide an OpenAI API key in the Settings to enable Vision AI.", 
+                    "OpenAI Configuration Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _useOpenAiVision = false;
+                return;
+            }
+            
+            // Update checkbox state if it exists
+            if (openAICheckBox != null)
+            {
+                openAICheckBox.Checked = _useOpenAiVision;
+            }
+            
+            string status = _useOpenAiVision ? "Enabled" : "Disabled";
+            WriteDebugLog($"Vision AI toggled: {status}");
+            toolStripStatusLabel1.Text = $"Vision AI {status}";
+            
+            // Reset the status text after a brief delay
+            Task.Delay(2000).ContinueWith(_ =>
+            {
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        if (isListening)
+                        {
+                            toolStripStatusLabel1.Text = useWhisper ? "Listening (Local)..." : "Listening (Azure)...";
+                        }
+                        else
+                        {
+                            toolStripStatusLabel1.Text = "Not listening";
+                        }
+                    }));
+                }
+            });
         }
 
         private async void toggleButton_Click(object sender, EventArgs e)
@@ -987,8 +1211,11 @@ namespace SPCHR
                 return;
             }
 
-            // Regular cleanup.
+            // Regular cleanup - Unregister all hotkeys
             UnregisterHotKey(this.Handle, HOTKEY_ID);
+            UnregisterHotKey(this.Handle, HOTKEY_ID_AUTO_INSERT);
+            UnregisterHotKey(this.Handle, HOTKEY_ID_VISION_AI);
+            
             recognizer?.Dispose();
             _transcriptor = null;
             _micAudioSource?.Dispose();
@@ -1143,11 +1370,14 @@ namespace SPCHR
             WriteDebugLog($"=== PROCESSING SPEECH RESULT ===");
             WriteDebugLog($"Recognized text: '{text}' (Length: {text.Length})");
             WriteDebugLog($"Vision AI enabled: {_useOpenAiVision}");
+            WriteDebugLog($"Auto-insert enabled: {_autoInsertEnabled}");
             
             // Use the provided screenshot path (captured when voice segment started)
             // If not provided, fall back to current screenshot path
             string screenshotToUse = screenshotPath ?? _screenshotPath;
 
+            string finalText = text;
+            
             if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && !string.IsNullOrEmpty(screenshotToUse) && File.Exists(screenshotToUse))
             {
                 try
@@ -1162,8 +1392,7 @@ namespace SPCHR
                     {
                         WriteDebugLog($"OpenAI enhanced text: '{enhancedText}'");
                         toolStripStatusLabel1.Text = isListening ? (useWhisper ? "Listening (Local)..." : "Listening (Azure)...") : "Not listening";
-                        await InsertTextDirect(enhancedText);
-                        return;
+                        finalText = enhancedText;
                     }
                 }
                 catch (Exception ex)
@@ -1178,9 +1407,32 @@ namespace SPCHR
                 WriteDebugLog($"Skipping OpenAI processing - Vision AI disabled or no screenshot available");
             }
 
-            // Fallback to original functionality
-            WriteDebugLog($"Using original text without OpenAI enhancement");
-            await InsertTextDirect(text);
+            // Handle text insertion based on AutoInsertEnabled setting
+            if (_autoInsertEnabled)
+            {
+                // Auto-insert mode: paste text immediately at cursor position
+                WriteDebugLog($"Auto-insert mode: pasting text immediately");
+                await InsertTextDirect(finalText);
+            }
+            else
+            {
+                // Accumulation mode: append to accumulated text and update clipboard
+                _accumulatedText.Append(finalText);
+                string accumulatedContent = _accumulatedText.ToString();
+                
+                WriteDebugLog($"Accumulation mode: added text to clipboard (total length: {accumulatedContent.Length})");
+                
+                // Update clipboard with accumulated text
+                try
+                {
+                    Clipboard.SetText(accumulatedContent);
+                    WriteDebugLog($"Clipboard updated with accumulated text");
+                }
+                catch (Exception ex)
+                {
+                    WriteDebugLog($"Error setting clipboard: {ex.Message}");
+                }
+            }
         }
 
         private string TakeScreenshotOfParentWindow()
@@ -1567,7 +1819,7 @@ namespace SPCHR
 
         private void SettingsMenuItem_Click(object sender, EventArgs e)
         {
-            using (var settingsForm = new SettingsForm(configuration, this))
+            using (var settingsForm = new SettingsForm(this))
             {
                 settingsForm.ShowDialog();
             }
@@ -1575,29 +1827,37 @@ namespace SPCHR
 
         private void settingsButton_Click(object sender, EventArgs e)
         {
-            using (var settingsForm = new SettingsForm(configuration, this))
+            using (var settingsForm = new SettingsForm(this))
             {
                 settingsForm.ShowDialog();
             }
         }
         
-        public void ReloadHotkeySettings()
+        public void ReloadAutoInsertSettings(IConfiguration config)
         {
-            // Unregister the current hotkey
+            // Reload AutoInsert setting
+            _autoInsertEnabled = true; // default value
+            if (bool.TryParse(config["AutoInsertEnabled"], out bool autoInsertValue))
+            {
+                _autoInsertEnabled = autoInsertValue;
+            }
+            WriteDebugLog($"AutoInsert setting reloaded: {_autoInsertEnabled}");
+        }
+        
+        public void ReloadHotkeySettings(IConfiguration config)
+        {
+            // Unregister all current hotkeys
             UnregisterHotKey(this.Handle, HOTKEY_ID);
+            UnregisterHotKey(this.Handle, HOTKEY_ID_AUTO_INSERT);
+            UnregisterHotKey(this.Handle, HOTKEY_ID_VISION_AI);
             
-            // Reload configuration (create new instance to pick up file changes)
-            var newConfiguration = new ConfigurationBuilder()
-                .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
-                .AddJsonFile("appsettings.json")
-                .AddJsonFile("appsettings.Development.json", optional: true)
-                .Build();
-                
             // Update the configuration reference
             // Note: This is a limitation - we can't easily update the readonly field
             // So we'll load settings directly from the new config
-            string modifiersString = newConfiguration["Hotkey:Modifiers"] ?? "Control,Alt";
-            string keyString = newConfiguration["Hotkey:Key"] ?? "L";
+            
+            // Load main listening hotkey
+            string modifiersString = config["Hotkey:Modifiers"] ?? "Control,Alt";
+            string keyString = config["Hotkey:Key"] ?? "L";
             
             // Parse modifiers
             _hotkeyModifiers = 0;
@@ -1628,8 +1888,83 @@ namespace SPCHR
                 _hotkeyVirtualKey = 0x4C; // Default to L key
             }
             
-            // Register the new hotkey
+            // Load Auto-Insert hotkey
+            string autoInsertModifiersString = config["HotkeyAutoInsert:Modifiers"] ?? "Control,Alt";
+            string autoInsertKeyString = config["HotkeyAutoInsert:Key"] ?? "I";
+            
+            _hotkeyAutoInsertModifiers = 0;
+            string[] autoInsertModifiers = autoInsertModifiersString.Split(',');
+            foreach (string modifier in autoInsertModifiers)
+            {
+                switch (modifier.Trim())
+                {
+                    case "Control":
+                        _hotkeyAutoInsertModifiers |= MOD_CONTROL;
+                        break;
+                    case "Alt":
+                        _hotkeyAutoInsertModifiers |= MOD_ALT;
+                        break;
+                    case "Shift":
+                        _hotkeyAutoInsertModifiers |= MOD_SHIFT;
+                        break;
+                }
+            }
+            
+            if (Enum.TryParse<Keys>(autoInsertKeyString, out Keys autoInsertKey))
+            {
+                _hotkeyAutoInsertVirtualKey = (uint)autoInsertKey;
+            }
+            else
+            {
+                _hotkeyAutoInsertVirtualKey = 0x49; // Default to I key
+            }
+            
+            // Load Vision AI hotkey
+            string visionAIModifiersString = config["HotkeyVisionAI:Modifiers"] ?? "Control,Alt";
+            string visionAIKeyString = config["HotkeyVisionAI:Key"] ?? "V";
+            
+            _hotkeyVisionAIModifiers = 0;
+            string[] visionAIModifiers = visionAIModifiersString.Split(',');
+            foreach (string modifier in visionAIModifiers)
+            {
+                switch (modifier.Trim())
+                {
+                    case "Control":
+                        _hotkeyVisionAIModifiers |= MOD_CONTROL;
+                        break;
+                    case "Alt":
+                        _hotkeyVisionAIModifiers |= MOD_ALT;
+                        break;
+                    case "Shift":
+                        _hotkeyVisionAIModifiers |= MOD_SHIFT;
+                        break;
+                }
+            }
+            
+            if (Enum.TryParse<Keys>(visionAIKeyString, out Keys visionAIKey))
+            {
+                _hotkeyVisionAIVirtualKey = (uint)visionAIKey;
+            }
+            else
+            {
+                _hotkeyVisionAIVirtualKey = 0x56; // Default to V key
+            }
+            
+            // Register all new hotkeys
             RegisterGlobalHotKey();
+        }
+        
+        public void ReloadSettings()
+        {
+            // Build configuration once and reuse it for all reload operations
+            var newConfiguration = new ConfigurationBuilder()
+                .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
+                .AddJsonFile("appsettings.json")
+                .AddJsonFile("appsettings.Development.json", optional: true)
+                .Build();
+            
+            ReloadAutoInsertSettings(newConfiguration);
+            ReloadHotkeySettings(newConfiguration);
         }
     }
 }

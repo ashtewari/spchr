@@ -34,6 +34,13 @@ namespace SPCHR
             this.txtHotkey = new TextBox();
             this.lblHotkey = new Label();
             this.lblHotkeyInstructions = new Label();
+            this.txtHotkeyAutoInsert = new TextBox();
+            this.lblHotkeyAutoInsert = new Label();
+            this.txtHotkeyVisionAI = new TextBox();
+            this.lblHotkeyVisionAI = new Label();
+            
+            this.groupBoxGeneral = new GroupBox();
+            this.chkAutoInsert = new CheckBox();
             
             this.btnSave = new Button();
             this.btnCancel = new Button();
@@ -41,6 +48,7 @@ namespace SPCHR
             this.groupBoxOpenAI.SuspendLayout();
             this.groupBoxAzure.SuspendLayout();
             this.groupBoxHotkey.SuspendLayout();
+            this.groupBoxGeneral.SuspendLayout();
             this.SuspendLayout();
             
             // 
@@ -144,14 +152,40 @@ namespace SPCHR
             // groupBoxHotkey
             // 
             this.groupBoxHotkey.Controls.Add(this.lblHotkeyInstructions);
+            this.groupBoxHotkey.Controls.Add(this.txtHotkeyVisionAI);
+            this.groupBoxHotkey.Controls.Add(this.lblHotkeyVisionAI);
+            this.groupBoxHotkey.Controls.Add(this.txtHotkeyAutoInsert);
+            this.groupBoxHotkey.Controls.Add(this.lblHotkeyAutoInsert);
             this.groupBoxHotkey.Controls.Add(this.txtHotkey);
             this.groupBoxHotkey.Controls.Add(this.lblHotkey);
             this.groupBoxHotkey.Location = new Point(12, 249);
             this.groupBoxHotkey.Name = "groupBoxHotkey";
-            this.groupBoxHotkey.Size = new Size(460, 80);
+            this.groupBoxHotkey.Size = new Size(460, 170);
             this.groupBoxHotkey.TabIndex = 2;
             this.groupBoxHotkey.TabStop = false;
             this.groupBoxHotkey.Text = "Hotkey Settings";
+            
+            // 
+            // groupBoxGeneral
+            // 
+            this.groupBoxGeneral.Controls.Add(this.chkAutoInsert);
+            this.groupBoxGeneral.Location = new Point(12, 425);
+            this.groupBoxGeneral.Name = "groupBoxGeneral";
+            this.groupBoxGeneral.Size = new Size(460, 60);
+            this.groupBoxGeneral.TabIndex = 3;
+            this.groupBoxGeneral.TabStop = false;
+            this.groupBoxGeneral.Text = "General Settings";
+            
+            // 
+            // chkAutoInsert
+            // 
+            this.chkAutoInsert.AutoSize = true;
+            this.chkAutoInsert.Location = new Point(6, 25);
+            this.chkAutoInsert.Name = "chkAutoInsert";
+            this.chkAutoInsert.Size = new Size(420, 19);
+            this.chkAutoInsert.TabIndex = 0;
+            this.chkAutoInsert.Text = "Auto-insert transcribed text (when disabled, text is accumulated in clipboard)";
+            this.chkAutoInsert.UseVisualStyleBackColor = true;
             
             // 
             // lblHotkey
@@ -166,7 +200,7 @@ namespace SPCHR
             // 
             // txtHotkey
             // 
-            this.txtHotkey.Location = new Point(120, 22);
+            this.txtHotkey.Location = new Point(140, 22);
             this.txtHotkey.Name = "txtHotkey";
             this.txtHotkey.ReadOnly = true;
             this.txtHotkey.Size = new Size(200, 23);
@@ -174,14 +208,54 @@ namespace SPCHR
             this.txtHotkey.KeyDown += new KeyEventHandler(this.txtHotkey_KeyDown);
             
             // 
+            // lblHotkeyAutoInsert
+            // 
+            this.lblHotkeyAutoInsert.AutoSize = true;
+            this.lblHotkeyAutoInsert.Location = new Point(6, 54);
+            this.lblHotkeyAutoInsert.Name = "lblHotkeyAutoInsert";
+            this.lblHotkeyAutoInsert.Size = new Size(128, 15);
+            this.lblHotkeyAutoInsert.TabIndex = 2;
+            this.lblHotkeyAutoInsert.Text = "Toggle Auto-Insert:";
+            
+            // 
+            // txtHotkeyAutoInsert
+            // 
+            this.txtHotkeyAutoInsert.Location = new Point(140, 51);
+            this.txtHotkeyAutoInsert.Name = "txtHotkeyAutoInsert";
+            this.txtHotkeyAutoInsert.ReadOnly = true;
+            this.txtHotkeyAutoInsert.Size = new Size(200, 23);
+            this.txtHotkeyAutoInsert.TabIndex = 3;
+            this.txtHotkeyAutoInsert.KeyDown += new KeyEventHandler(this.txtHotkeyAutoInsert_KeyDown);
+            
+            // 
+            // lblHotkeyVisionAI
+            // 
+            this.lblHotkeyVisionAI.AutoSize = true;
+            this.lblHotkeyVisionAI.Location = new Point(6, 83);
+            this.lblHotkeyVisionAI.Name = "lblHotkeyVisionAI";
+            this.lblHotkeyVisionAI.Size = new Size(115, 15);
+            this.lblHotkeyVisionAI.TabIndex = 4;
+            this.lblHotkeyVisionAI.Text = "Toggle Vision AI:";
+            
+            // 
+            // txtHotkeyVisionAI
+            // 
+            this.txtHotkeyVisionAI.Location = new Point(140, 80);
+            this.txtHotkeyVisionAI.Name = "txtHotkeyVisionAI";
+            this.txtHotkeyVisionAI.ReadOnly = true;
+            this.txtHotkeyVisionAI.Size = new Size(200, 23);
+            this.txtHotkeyVisionAI.TabIndex = 5;
+            this.txtHotkeyVisionAI.KeyDown += new KeyEventHandler(this.txtHotkeyVisionAI_KeyDown);
+            
+            // 
             // lblHotkeyInstructions
             // 
             this.lblHotkeyInstructions.AutoSize = true;
             this.lblHotkeyInstructions.ForeColor = Color.Gray;
-            this.lblHotkeyInstructions.Location = new Point(6, 50);
+            this.lblHotkeyInstructions.Location = new Point(6, 110);
             this.lblHotkeyInstructions.Name = "lblHotkeyInstructions";
             this.lblHotkeyInstructions.Size = new Size(314, 15);
-            this.lblHotkeyInstructions.TabIndex = 2;
+            this.lblHotkeyInstructions.TabIndex = 6;
             this.lblHotkeyInstructions.Text = "Click in the text box and press your desired key combination";
             
             // 
@@ -224,10 +298,10 @@ namespace SPCHR
             // 
             // btnSave
             // 
-            this.btnSave.Location = new Point(316, 340);
+            this.btnSave.Location = new Point(316, 495);
             this.btnSave.Name = "btnSave";
             this.btnSave.Size = new Size(75, 30);
-            this.btnSave.TabIndex = 3;
+            this.btnSave.TabIndex = 4;
             this.btnSave.Text = "Save";
             this.btnSave.UseVisualStyleBackColor = true;
             this.btnSave.Click += new EventHandler(this.btnSave_Click);
@@ -235,10 +309,10 @@ namespace SPCHR
             // 
             // btnCancel
             // 
-            this.btnCancel.Location = new Point(397, 340);
+            this.btnCancel.Location = new Point(397, 495);
             this.btnCancel.Name = "btnCancel";
             this.btnCancel.Size = new Size(75, 30);
-            this.btnCancel.TabIndex = 4;
+            this.btnCancel.TabIndex = 5;
             this.btnCancel.Text = "Cancel";
             this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new EventHandler(this.btnCancel_Click);
@@ -246,9 +320,10 @@ namespace SPCHR
             // 
             // SettingsForm
             // 
-            this.ClientSize = new Size(484, 382);
+            this.ClientSize = new Size(484, 537);
             this.Controls.Add(this.btnCancel);
             this.Controls.Add(this.btnSave);
+            this.Controls.Add(this.groupBoxGeneral);
             this.Controls.Add(this.groupBoxHotkey);
             this.Controls.Add(this.groupBoxAzure);
             this.Controls.Add(this.groupBoxOpenAI);
@@ -266,6 +341,8 @@ namespace SPCHR
             this.groupBoxAzure.PerformLayout();
             this.groupBoxHotkey.ResumeLayout(false);
             this.groupBoxHotkey.PerformLayout();
+            this.groupBoxGeneral.ResumeLayout(false);
+            this.groupBoxGeneral.PerformLayout();
             this.ResumeLayout(false);
         }
 
@@ -288,6 +365,13 @@ namespace SPCHR
         private TextBox txtHotkey;
         private Label lblHotkey;
         private Label lblHotkeyInstructions;
+        private TextBox txtHotkeyAutoInsert;
+        private Label lblHotkeyAutoInsert;
+        private TextBox txtHotkeyVisionAI;
+        private Label lblHotkeyVisionAI;
+        
+        private GroupBox groupBoxGeneral;
+        private CheckBox chkAutoInsert;
         
         private Button btnSave;
         private Button btnCancel;
