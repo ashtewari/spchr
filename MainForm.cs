@@ -172,6 +172,10 @@ namespace SPCHR
         private CheckBox openAICheckBox;
 
         private string _screenshotPath;
+        
+        // VAD-triggered screenshot coordination
+        private string _currentSegmentScreenshotPath = string.Empty;
+        private bool _screenshotTakenForCurrentSegment = false; // Track if screenshot was taken for current segment
 
         // Semaphore to prevent concurrent text insertion operations
         private static readonly SemaphoreSlim _textInsertionSemaphore = new SemaphoreSlim(1, 1);
@@ -331,6 +335,8 @@ namespace SPCHR
                 
                 recognizer = new SpeechRecognizer(config, audioConfig);
 
+                // Register Recognizing event to capture screenshot when voice activity starts
+                recognizer.Recognizing += Recognizer_Recognizing;
                 recognizer.Recognized += Recognizer_Recognized;
             }
             catch (Exception ex)
@@ -344,6 +350,29 @@ namespace SPCHR
             }
         }
 
+        private void Recognizer_Recognizing(object? sender, SpeechRecognitionEventArgs e)
+        {
+            // Capture screenshot when voice activity is first detected (new segment starts)
+            if (e.Result.Reason == ResultReason.RecognizingSpeech)
+            {
+                // Capture screenshot when voice activity is first detected (new segment starts)
+                // Recognizing events fire multiple times for the same segment, so we only capture once
+                // Set flag immediately to prevent race condition with rapid events
+                if (!_screenshotTakenForCurrentSegment)
+                {
+                    _screenshotTakenForCurrentSegment = true; // Set immediately to prevent duplicates
+                    WriteDebugLog($"=== NEW VOICE SEGMENT DETECTED (Azure) - Capturing screenshot ===");
+                    
+                    // Capture screenshot when voice activity starts
+                    this.Invoke(new Action(() =>
+                    {
+                        _currentSegmentScreenshotPath = TakeScreenshotOfParentWindow();
+                        WriteDebugLog($"Screenshot captured for segment: {_currentSegmentScreenshotPath}");
+                    }));
+                }
+            }
+        }
+
         private void Recognizer_Recognized(object? sender, SpeechRecognitionEventArgs e)
         {
             if (e.Result.Reason == ResultReason.RecognizedSpeech)
@@ -352,10 +381,16 @@ namespace SPCHR
                 if (!string.IsNullOrEmpty(recognizedText))
                 {
                     Console.Write(recognizedText);
+                    // Use the screenshot captured when this segment started
+                    string screenshotPath = _currentSegmentScreenshotPath;
                     this.Invoke(async () =>
                     {
-                        await ProcessResults(recognizedText);
+                        await ProcessResults(recognizedText, screenshotPath);
                     });
+                    
+                    // Reset for next segment
+                    _currentSegmentScreenshotPath = string.Empty;
+                    _screenshotTakenForCurrentSegment = false;
                 }
             }
         }
@@ -864,12 +899,16 @@ namespace SPCHR
             {
                 if (!isListening)
                 {
+                    // Reset segment tracking
+                    _screenshotTakenForCurrentSegment = false;
+                    _currentSegmentScreenshotPath = string.Empty;
+                    
                     await InitializeRealtimeTranscriptor();
                     _micAudioSource.StartRecording();
                     toggleButton.Text = "Stop Listening";
                     toolStripStatusLabel1.Text = "Listening (Local)...";
                     SetMicrophoneActive(true);
-                    TakeScreenshotOfParentWindow();
+                    // Removed: TakeScreenshotOfParentWindow(); - Screenshots now triggered by VAD
                 }
                 else
                 {
@@ -891,11 +930,15 @@ namespace SPCHR
             {
                 if (!isListening)
                 {
+                    // Reset segment tracking
+                    _screenshotTakenForCurrentSegment = false;
+                    _currentSegmentScreenshotPath = string.Empty;
+                    
                     await recognizer.StartContinuousRecognitionAsync();
                     toggleButton.Text = "Stop Listening";
                     toolStripStatusLabel1.Text = "Listening (Azure)...";
                     SetMicrophoneActive(true);
-                    TakeScreenshotOfParentWindow();
+                    // Removed: TakeScreenshotOfParentWindow(); - Screenshots now triggered by VAD
                 }
                 else
                 {
@@ -1044,13 +1087,36 @@ namespace SPCHR
                     await foreach (var segment in _transcriptor.TranscribeAsync(_micAudioSource, _transcriptionCancellation.Token))
                     {
                         string text = string.Empty;
+                        string screenshotPath = string.Empty;
+                        
                         if (segment is RealtimeSegmentRecognizing recognizing)
                         {
-                            //text = recognizing.Segment.Text;
+                            // Capture screenshot when a new voice segment starts (first recognizing event)
+                            // RealtimeSegmentRecognizing fires multiple times for the same segment,
+                            // so we only capture once per segment by checking the flag
+                            // Set flag immediately to prevent race condition with rapid events
+                            if (!_screenshotTakenForCurrentSegment)
+                            {
+                                _screenshotTakenForCurrentSegment = true; // Set immediately to prevent duplicates
+                                WriteDebugLog($"=== NEW VOICE SEGMENT DETECTED (Whisper) - Capturing screenshot ===");
+                                
+                                // Capture screenshot when voice activity starts
+                                this.Invoke(new Action(() =>
+                                {
+                                    _currentSegmentScreenshotPath = TakeScreenshotOfParentWindow();
+                                    WriteDebugLog($"Screenshot captured for segment: {_currentSegmentScreenshotPath}");
+                                }));
+                            }
                         }
                         else if (segment is RealtimeSegmentRecognized recognized)
                         {
                             text = recognized.Segment.Text;
+                            // Use the screenshot captured when this segment started
+                            screenshotPath = _currentSegmentScreenshotPath;
+                            
+                            // Reset for next segment
+                            _currentSegmentScreenshotPath = string.Empty;
+                            _screenshotTakenForCurrentSegment = false;
                         }
 
                         if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
@@ -1058,7 +1124,7 @@ namespace SPCHR
                             // Ensure UI thread invocation.
                             this.Invoke(new Action(async () =>
                             {
-                                await ProcessResults(text);
+                                await ProcessResults(text, screenshotPath);
                             }));
                         }
 
@@ -1072,23 +1138,25 @@ namespace SPCHR
             }
         }
 
-        private async Task ProcessResults(string text)
+        private async Task ProcessResults(string text, string screenshotPath = null)
         {
             WriteDebugLog($"=== PROCESSING SPEECH RESULT ===");
             WriteDebugLog($"Recognized text: '{text}' (Length: {text.Length})");
             WriteDebugLog($"Vision AI enabled: {_useOpenAiVision}");
             
-            TakeScreenshotOfParentWindow();
+            // Use the provided screenshot path (captured when voice segment started)
+            // If not provided, fall back to current screenshot path
+            string screenshotToUse = screenshotPath ?? _screenshotPath;
 
-            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && !string.IsNullOrEmpty(_screenshotPath) && File.Exists(_screenshotPath))
+            if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey) && !string.IsNullOrEmpty(screenshotToUse) && File.Exists(screenshotToUse))
             {
                 try
                 {
-                    WriteDebugLog($"Processing with OpenAI Vision using screenshot: {_screenshotPath}");
+                    WriteDebugLog($"Processing with OpenAI Vision using screenshot: {screenshotToUse}");
                     toolStripStatusLabel1.Text = "Processing with Vision AI...";
                     Application.DoEvents(); // Update UI
 
-                    string enhancedText = await _openAIService.EnhanceText(text, _screenshotPath);
+                    string enhancedText = await _openAIService.EnhanceText(text, screenshotToUse);
 
                     if (!string.IsNullOrEmpty(enhancedText))
                     {
@@ -1115,17 +1183,17 @@ namespace SPCHR
             await InsertTextDirect(text);
         }
 
-        private void TakeScreenshotOfParentWindow()
+        private string TakeScreenshotOfParentWindow()
         {
             // Only take screenshot if Vision AI is enabled
             if (_useOpenAiVision && !string.IsNullOrEmpty(_openAIService.ApiKey))
             {
                 var wHandle = GetTopLevelParentWindow();
-                _screenshotPath = CaptureScreenshotByWindowHandle(wHandle);
+                return CaptureScreenshotByWindowHandle(wHandle);
             }
             else
             {
-                _screenshotPath = string.Empty; // Clear any existing screenshot path
+                return string.Empty; // Return empty string instead of clearing _screenshotPath
             }
         }
 
@@ -1464,7 +1532,7 @@ namespace SPCHR
         {
             return new WebRtcVadSharpDetectorFactory(new WebRtcVadSharpOptions()
             {
-                OperatingMode = OperatingMode.HighQuality, // The operating mode of the VAD. The default is OperatingMode.HighQuality.
+                OperatingMode = OperatingMode.VeryAggressive, // The operating mode of the VAD. The default is OperatingMode.HighQuality.
             });
         }        
 
