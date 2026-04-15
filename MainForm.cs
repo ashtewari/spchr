@@ -195,6 +195,13 @@ namespace SPCHR
         private string _currentSegmentScreenshotPath = string.Empty;
         private bool _screenshotTakenForCurrentSegment = false; // Track if screenshot was taken for current segment
 
+        // Sentence accumulation for complete utterance processing
+        private StringBuilder _pendingSentence = new StringBuilder();
+        private string _pendingScreenshotPath = string.Empty;
+        private System.Windows.Forms.Timer _sentenceDebounceTimer;
+        private const int SENTENCE_DEBOUNCE_MS = 1500; // Wait 1.5 seconds of silence before processing
+        private readonly object _sentenceLock = new object();
+
         // Semaphore to prevent concurrent text insertion operations
         private static readonly SemaphoreSlim _textInsertionSemaphore = new SemaphoreSlim(1, 1);
 
@@ -279,6 +286,7 @@ namespace SPCHR
             LoadHotkeySettings();
             RegisterGlobalHotKey();
             InitializeSpeechRecognizer();
+            InitializeSentenceDebounceTimer();
 
             // Add OpenAI Checkbox (after InitializeComponent has been called)
             this.openAICheckBox = new CheckBox();
@@ -311,6 +319,61 @@ namespace SPCHR
             // Properly dispose of the tray icon when closing the form
             DisposeTrayIcon();
             base.OnClosing(e);
+        }
+
+        private void InitializeSentenceDebounceTimer()
+        {
+            _sentenceDebounceTimer = new System.Windows.Forms.Timer();
+            _sentenceDebounceTimer.Interval = SENTENCE_DEBOUNCE_MS;
+            _sentenceDebounceTimer.Tick += SentenceDebounceTimer_Tick;
+        }
+
+        private async void SentenceDebounceTimer_Tick(object sender, EventArgs e)
+        {
+            _sentenceDebounceTimer.Stop();
+
+            string completeSentence;
+            string screenshotPath;
+
+            lock (_sentenceLock)
+            {
+                completeSentence = _pendingSentence.ToString().Trim();
+                screenshotPath = _pendingScreenshotPath;
+                _pendingSentence.Clear();
+                _pendingScreenshotPath = string.Empty;
+            }
+
+            if (!string.IsNullOrEmpty(completeSentence))
+            {
+                WriteDebugLog($"=== DEBOUNCE COMPLETE - Processing accumulated sentence ===");
+                WriteDebugLog($"Complete sentence: '{completeSentence}' (Length: {completeSentence.Length})");
+                await ProcessResults(completeSentence, screenshotPath);
+            }
+        }
+
+        private void AccumulateRecognizedText(string text, string screenshotPath)
+        {
+            lock (_sentenceLock)
+            {
+                // Capture the screenshot path from the first segment if not already set
+                if (string.IsNullOrEmpty(_pendingScreenshotPath) && !string.IsNullOrEmpty(screenshotPath))
+                {
+                    _pendingScreenshotPath = screenshotPath;
+                    WriteDebugLog($"Captured screenshot path for sentence: {screenshotPath}");
+                }
+
+                // Accumulate the text
+                if (_pendingSentence.Length > 0 && !text.StartsWith(" "))
+                {
+                    _pendingSentence.Append(" ");
+                }
+                _pendingSentence.Append(text.Trim());
+                WriteDebugLog($"Accumulated text: '{_pendingSentence}' (added: '{text.Trim()}')");
+            }
+
+            // Reset the debounce timer - wait for more text or timeout
+            _sentenceDebounceTimer.Stop();
+            _sentenceDebounceTimer.Start();
         }
 
         private void LogMicrophoneDevice(string context)
@@ -406,12 +469,17 @@ namespace SPCHR
                 if (!string.IsNullOrEmpty(recognizedText))
                 {
                     Console.Write(recognizedText);
+                    WriteDebugLog($"Recognized text: '{recognizedText}' (Length: {recognizedText.Length})");
+                    
                     // Use the screenshot captured when this segment started
                     string screenshotPath = _currentSegmentScreenshotPath;
-                    this.Invoke(async () =>
+                    
+                    // Accumulate text instead of processing immediately
+                    // This handles cases where Azure splits sentences
+                    this.Invoke(new Action(() =>
                     {
-                        await ProcessResults(recognizedText, screenshotPath);
-                    });
+                        AccumulateRecognizedText(recognizedText, screenshotPath);
+                    }));
                     
                     // Reset for next segment
                     _currentSegmentScreenshotPath = string.Empty;
@@ -1037,6 +1105,14 @@ namespace SPCHR
                     _screenshotTakenForCurrentSegment = false;
                     _currentSegmentScreenshotPath = string.Empty;
                     
+                    // Reset pending sentence accumulation
+                    lock (_sentenceLock)
+                    {
+                        _pendingSentence.Clear();
+                        _pendingScreenshotPath = string.Empty;
+                    }
+                    _sentenceDebounceTimer.Stop();
+                    
                     // Reset accumulated text when starting listening
                     _accumulatedText.Clear();
                     WriteDebugLog("Accumulated text cleared - starting new listening session");
@@ -1051,24 +1127,28 @@ namespace SPCHR
                 else
                 {
                     if (_micAudioSource != null)
-                    {
-                        _micAudioSource.StopRecording();
-                        _transcriptionCancellation?.Cancel();
-                        _transcriptionCancellation?.Dispose();
-                        _transcriptionCancellation = null;
-                        _micAudioSource.Dispose();
-                        _micAudioSource = null;
-                    }
-                    toggleButton.Text = "Start Listening";
-                    toolStripStatusLabel1.Text = "Not listening";
-                    SetMicrophoneActive(false);
+                        {
+                            _micAudioSource.StopRecording();
+                            _transcriptionCancellation?.Cancel();
+                            _transcriptionCancellation?.Dispose();
+                            _transcriptionCancellation = null;
+                            _micAudioSource.Dispose();
+                            _micAudioSource = null;
+                        }
                     
-                    // Log accumulated text when stopping (if in accumulation mode)
-                    if (!_autoInsertEnabled && _accumulatedText.Length > 0)
-                    {
-                        WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
+                        // Process any pending accumulated sentence before stopping
+                        await FlushPendingSentenceAsync();
+                    
+                        toggleButton.Text = "Start Listening";
+                        toolStripStatusLabel1.Text = "Not listening";
+                        SetMicrophoneActive(false);
+                    
+                        // Log accumulated text when stopping (if in accumulation mode)
+                        if (!_autoInsertEnabled && _accumulatedText.Length > 0)
+                        {
+                            WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
+                        }
                     }
-                }
             }
             else if (recognizer != null)
             {
@@ -1077,6 +1157,14 @@ namespace SPCHR
                     // Reset segment tracking
                     _screenshotTakenForCurrentSegment = false;
                     _currentSegmentScreenshotPath = string.Empty;
+                    
+                    // Reset pending sentence accumulation
+                    lock (_sentenceLock)
+                    {
+                        _pendingSentence.Clear();
+                        _pendingScreenshotPath = string.Empty;
+                    }
+                    _sentenceDebounceTimer.Stop();
                     
                     // Reset accumulated text when starting listening
                     _accumulatedText.Clear();
@@ -1091,20 +1179,47 @@ namespace SPCHR
                 else
                 {
                     await recognizer.StopContinuousRecognitionAsync();
-                    toggleButton.Text = "Start Listening";
-                    toolStripStatusLabel1.Text = "Not listening";
-                    SetMicrophoneActive(false);
                     
-                    // Log accumulated text when stopping (if in accumulation mode)
-                    if (!_autoInsertEnabled && _accumulatedText.Length > 0)
-                    {
-                        WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
-                    }
-                }
-            }
+                                // Process any pending accumulated sentence before stopping
+                                await FlushPendingSentenceAsync();
+                    
+                                toggleButton.Text = "Start Listening";
+                                toolStripStatusLabel1.Text = "Not listening";
+                                SetMicrophoneActive(false);
+                    
+                                // Log accumulated text when stopping (if in accumulation mode)
+                                if (!_autoInsertEnabled && _accumulatedText.Length > 0)
+                                {
+                                    WriteDebugLog($"Listening stopped - accumulated text in clipboard ({_accumulatedText.Length} characters)");
+                                }
+                            }
+                        }
 
-            isListening = !isListening;
-        }
+                        isListening = !isListening;
+                    }
+
+                    private async Task FlushPendingSentenceAsync()
+                    {
+                        _sentenceDebounceTimer.Stop();
+
+                        string completeSentence;
+                        string screenshotPath;
+
+                        lock (_sentenceLock)
+                        {
+                            completeSentence = _pendingSentence.ToString().Trim();
+                            screenshotPath = _pendingScreenshotPath;
+                            _pendingSentence.Clear();
+                            _pendingScreenshotPath = string.Empty;
+                        }
+
+                        if (!string.IsNullOrEmpty(completeSentence))
+                        {
+                            WriteDebugLog($"=== FLUSH - Processing remaining sentence on stop ===");
+                            WriteDebugLog($"Complete sentence: '{completeSentence}' (Length: {completeSentence.Length})");
+                            await ProcessResults(completeSentence, screenshotPath);
+                        }
+                    }
 
         private void ToggleAutoInsert()
         {
@@ -1219,6 +1334,8 @@ namespace SPCHR
             recognizer?.Dispose();
             _transcriptor = null;
             _micAudioSource?.Dispose();
+            _sentenceDebounceTimer?.Stop();
+            _sentenceDebounceTimer?.Dispose();
             
             // Ensure tray icon is properly disposed
             DisposeTrayIcon();
@@ -1349,9 +1466,10 @@ namespace SPCHR
                         if (!string.IsNullOrWhiteSpace(text) && !text.ToLower().Contains("[blank_audio]") && !text.ToLower().Contains("[silence]"))
                         {
                             // Ensure UI thread invocation.
-                            this.Invoke(new Action(async () =>
+                            // Accumulate text instead of processing immediately for Whisper as well
+                            this.Invoke(new Action(() =>
                             {
-                                await ProcessResults(text, screenshotPath);
+                                AccumulateRecognizedText(text, screenshotPath);
                             }));
                         }
 
