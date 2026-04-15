@@ -83,7 +83,15 @@ namespace SPCHR.Services
                 client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
                 
                 var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_endpoint}v1/chat/completions", content);
+                
+                // Ensure endpoint has trailing slash for proper URL construction
+                string baseEndpoint = _endpoint.TrimEnd('/');
+                string requestUrl = $"{baseEndpoint}/v1/chat/completions";
+                
+                System.Diagnostics.Debug.WriteLine($"Sending request to: {requestUrl}");
+                System.Diagnostics.Debug.WriteLine($"Model: {_model}");
+                
+                var response = await client.PostAsync(requestUrl, content);
                 
                 if (response.IsSuccessStatusCode)
                 {
